@@ -90,6 +90,7 @@ there, not by being relayed. This add-on handles everything *else* on the wire.
 | Service | Used by |
 |---|---|
 | `_hap._tcp.local` | HomeKit accessories and bridges |
+| `_hap._udp.local` | HomeKit over Thread/BLE (Eve sensors and similar) - a separate type, and `_hap._tcp` does not match it |
 | `_airplay._tcp.local`, `_raop._tcp.local` | AirPlay video / audio |
 | `_companion-link._tcp.local` | Apple TV & HomePod (home hub pairing) |
 | `_sleep-proxy._udp.local` | Bonjour sleep proxy (Apple hubs) |
@@ -270,6 +271,7 @@ reflect_filters:
   - _airplay._tcp.local
   - _raop._tcp.local
   - _hap._tcp.local
+  - _hap._udp.local
   - _matter._tcp.local
   - _matterc._udp.local
   - _esphomelib._tcp.local

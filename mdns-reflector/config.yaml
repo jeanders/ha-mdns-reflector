@@ -46,6 +46,7 @@ options:
     - _airplay._tcp.local
     - _raop._tcp.local
     - _hap._tcp.local
+    - _hap._udp.local
     - _matter._tcp.local
     - _matterc._udp.local
     - _esphomelib._tcp.local
