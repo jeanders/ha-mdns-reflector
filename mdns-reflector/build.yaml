@@ -1,0 +1,6 @@
+---
+# Debian base: Debian's Avahi build carries the reflect-filters patch, which
+# Alpine's package does not reliably ship.
+build_from:
+  aarch64: ghcr.io/home-assistant/base-debian:trixie
+  amd64: ghcr.io/home-assistant/base-debian:trixie

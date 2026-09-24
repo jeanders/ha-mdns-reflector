@@ -40,12 +40,19 @@ discovered from another one.
 
 ## Installation
 
-1. Copy the `mdns-reflector` folder into the `/addons` share on the Home
-   Assistant host (via the Samba or SSH add-on).
-2. **Settings → Add-ons → Add-on Store**, then ⋮ → **Check for updates**.
-3. Open **Local add-ons → mDNS Reflector → Install**. The first build takes a
-   few minutes; it compiles nothing but does pull a Debian base image.
-4. Set the options (below), then **Start**, and read the **Log** tab.
+**From the repository (normal route):**
+
+1. **Settings → Add-ons → Add-on Store**, then ⋮ → **Repositories**, and add
+   `https://github.com/jeanders/ha-mdns-reflector`.
+2. Install **mDNS Reflector** from the list.
+3. Set the options (below), then **Start**, and read the **Log** tab.
+
+**From a local copy (for development):** copy the `mdns-reflector` folder into
+the `/addons` share via the Samba or SSH add-on, then ⋮ → **Check for updates**
+and install it under **Local add-ons**.
+
+Until a release has published images, installing builds the image on your own
+hardware. That takes a few minutes and pulls a Debian base image.
 
 ## What is never reflected
 

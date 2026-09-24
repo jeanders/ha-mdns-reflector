@@ -1,0 +1,34 @@
+configuration:
+  interfaces:
+    name: Interfaces
+    description: >-
+      Host network interfaces to reflect mDNS between, such as end0, end0.20
+      and end0.30. At least two are required, and each must already exist on
+      the host.
+  reflect_filters:
+    name: Reflect filters
+    description: >-
+      Service types allowed to cross between VLANs, for example
+      _hap._tcp.local. Leave empty to reflect every service type. This host's
+      own announcements are never reflected either way.
+  reflect_ipv6:
+    name: Reflect over IPv6
+    description: Also reflect mDNS traffic over IPv6.
+  reflect_between_ipv4_ipv6:
+    name: Bridge IPv4 and IPv6
+    description: >-
+      Forward mDNS traffic between IPv4 and IPv6. Leave off unless you know
+      you need it.
+  disallow_other_stacks:
+    name: Disallow other mDNS stacks
+    description: >-
+      Stop Avahi from sharing UDP port 5353 with other responders. Leave off,
+      or Avahi will conflict with Home Assistant's own zeroconf stack.
+  allow_point_to_point:
+    name: Allow point-to-point interfaces
+    description: Include PPP and VPN style interfaces when reflecting.
+  log_level:
+    name: Log level
+    description: >-
+      Set to debug to log the generated Avahi configuration and run the daemon
+      with verbose output.

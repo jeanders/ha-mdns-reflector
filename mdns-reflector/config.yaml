@@ -1,20 +1,24 @@
 ---
+# https://developers.home-assistant.io/docs/add-ons/configuration#add-on-config
 name: mDNS Reflector
 version: "1.0.0"
 slug: mdns_reflector
 description: >-
-  Reflects mDNS/Bonjour (HomeKit, AirPlay, ONVIF) between VLAN interfaces
-  using Avahi, with per-service filtering.
+  Reflect mDNS/Bonjour between VLAN interfaces with Avahi, so HomeKit,
+  AirPlay and ONVIF discovery work across network segments.
+url: "https://github.com/jeanders/ha-mdns-reflector/tree/main/mdns-reflector"
+# Uncomment after the first GitHub release has published images. Until then
+# this stays commented so the add-on builds locally on the host.
+# image: "ghcr.io/jeanders/mdns-reflector"
 arch:
   - aarch64
   - amd64
-  - armv7
 init: false
 startup: services
 boot: auto
 
-# Required: the reflector must see the host's real VLAN interfaces
-# (end0, end0.20, end0.30) rather than a private container network.
+# The reflector must see the host's real VLAN interfaces (end0, end0.20,
+# end0.30) rather than a private container network.
 host_network: true
 privileged:
   - NET_ADMIN

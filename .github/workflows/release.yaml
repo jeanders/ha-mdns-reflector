@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Compare add-on version with the release tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          # Accept both "1.2.3" and "v1.2.3" as tags.
+          tag_version="${TAG#v}"
+          # Plain shell so this does not depend on yq being present on the runner.
+          addon_version=$(grep -E '^version:' mdns-reflector/config.yaml \
+              | head -1 | sed -E 's/^version:[[:space:]]*"?([^"]+)"?[[:space:]]*$/\1/')
+
+          echo "Release tag:      ${tag_version}"
+          echo "config.yaml:      ${addon_version}"
+
+          if [[ "${tag_version}" != "${addon_version}" ]]; then
+            echo "::error::Release tag ${tag_version} does not match the version in mdns-reflector/config.yaml (${addon_version}). Bump config.yaml and re-tag."
+            exit 1
+          fi
+
+  build:
+    name: Build and publish images
+    needs: verify
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/build-addon.yaml
+    with:
+      addon: mdns-reflector
+      publish: true
+    secrets: inherit

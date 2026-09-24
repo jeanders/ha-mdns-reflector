@@ -1,0 +1,5 @@
+---
+# https://developers.home-assistant.io/docs/add-ons/repository
+name: mDNS Reflector Add-on
+url: "https://github.com/jeanders/ha-mdns-reflector"
+maintainer: "John Anderson (@jeanders)"

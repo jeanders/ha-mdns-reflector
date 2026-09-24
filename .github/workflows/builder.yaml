@@ -1,0 +1,81 @@
+name: Builder
+
+env:
+  MONITORED_FILES: "config.yaml Dockerfile rootfs"
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  init:
+    name: Initialize builds
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.filter.outputs.changed }}
+      changed_addons: ${{ steps.filter.outputs.changed_addons }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Get changed files
+        id: changed_files
+        uses: tj-actions/changed-files@v47
+
+      - name: Find add-on directories
+        id: addons
+        uses: home-assistant/actions/helpers/find-addons@master
+
+      - name: Filter changed add-ons
+        id: filter
+        env:
+          ADDONS: ${{ steps.addons.outputs.addons }}
+          CHANGED_FILES: ${{ steps.changed_files.outputs.all_changed_files }}
+        run: |
+          changed_addons=()
+
+          # If the workflow file itself changed, rebuild everything
+          if [[ "${CHANGED_FILES}" =~ \.github/workflows/(builder|build-addon)\.yaml ]]; then
+            changed_addons=(${ADDONS})
+          else
+            for addon in ${ADDONS}; do
+              for file in ${MONITORED_FILES}; do
+                if [[ "${CHANGED_FILES}" =~ ${addon}/${file} ]]; then
+                  changed_addons+=("${addon}")
+                  break
+                fi
+              done
+            done
+          fi
+
+          if [[ ${#changed_addons[@]} -gt 0 ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "changed_addons=$(jq -nc '$ARGS.positional' --args "${changed_addons[@]}")" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-addon:
+    name: Build ${{ matrix.addon }}
+    needs: init
+    if: needs.init.outputs.changed == 'true'
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        addon: ${{ fromJSON(needs.init.outputs.changed_addons) }}
+    uses: ./.github/workflows/build-addon.yaml
+    with:
+      addon: ${{ matrix.addon }}
+      publish: false
+    secrets: inherit
