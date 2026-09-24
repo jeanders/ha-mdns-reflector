@@ -1,0 +1,50 @@
+---
+name: mDNS Reflector
+version: "1.0.0"
+slug: mdns_reflector
+description: >-
+  Reflects mDNS/Bonjour (HomeKit, AirPlay, ONVIF) between VLAN interfaces
+  using Avahi, with per-service filtering.
+arch:
+  - aarch64
+  - amd64
+  - armv7
+init: false
+startup: services
+boot: auto
+
+# Required: the reflector must see the host's real VLAN interfaces
+# (end0, end0.20, end0.30) rather than a private container network.
+host_network: true
+privileged:
+  - NET_ADMIN
+  - NET_RAW
+
+options:
+  interfaces:
+    - end0
+    - end0.20
+    - end0.30
+  # Empty = reflect every service type. Avahi never reflects the host's own
+  # announcements (see originates_from_local_iface in avahi-core/server.c),
+  # so Home Assistant's and Scrypted's own services are excluded automatically.
+  reflect_filters: []
+  reflect_ipv6: false
+  reflect_between_ipv4_ipv6: false
+  disallow_other_stacks: false
+  allow_point_to_point: false
+  log_level: info
+
+schema:
+  # Host interfaces to reflect between. At least two, or there is nothing to do.
+  interfaces:
+    - str
+  # Service types allowed to cross. Empty list = reflect everything.
+  reflect_filters:
+    - str
+  reflect_ipv6: bool
+  reflect_between_ipv4_ipv6: bool
+  # Leave false so Avahi coexists with Home Assistant's own mDNS stack on :5353.
+  disallow_other_stacks: bool
+  allow_point_to_point: bool
+  log_level: list(debug|info|notice|warn|error|fatal)
