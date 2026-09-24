@@ -15,7 +15,6 @@ arch:
   - amd64
 init: false
 startup: services
-boot: auto
 
 # The reflector must see the host's real VLAN interfaces (end0, end0.20,
 # end0.30) rather than a private container network.
