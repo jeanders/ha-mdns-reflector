@@ -121,19 +121,18 @@ Those numbers are rename counts, and they are two *separate* conflicts:
 Avahi's filter only inspects PTR, SRV and TXT records; A and AAAA bypass it
 entirely. That is why this add-on offers two separate mechanisms.
 
-### 1. The default filter list (handles the service half)
+### 1. The default filter list (handles part of the service half)
 
-The shipped `reflect_filters` omits Apple's peer-to-peer and identity services
-— `_companion-link`, `_rdlink`, `_device-info`, `_sleep-proxy`, `_airplay`,
-`_raop` — which are the ones dual-homed Macs advertise about themselves. This
-stops the ComputerName churn without affecting HomeKit, Matter, Chromecast or
-printing.
+The shipped `reflect_filters` omits `_companion-link`, `_rdlink`,
+`_device-info` and `_sleep-proxy` — Apple's peer-to-peer and identity
+services. They carry no cross-VLAN discovery value and are a conflict source.
 
-The cost: **AirPlay is not reflected by default.** If you need to AirPlay
-across VLANs, add `_airplay._tcp.local` and `_raop._tcp.local` back, and expect
-the rename behaviour to return on any dual-homed Mac.
+`_airplay._tcp` and `_raop._tcp` **are** reflected by default, because
+cross-VLAN AirPlay is usually the reason people run a reflector. They are also
+a conflict source for a dual-homed machine, which is what the next section is
+for.
 
-### 2. `exclude_sources` (handles the hostname half)
+### 2. `exclude_sources` (handles the hostname half, and AirPlay)
 
 List **both** addresses of the dual-homed machine:
 
@@ -141,21 +140,37 @@ List **both** addresses of the dual-homed machine:
 exclude_sources:
   - 192.168.10.5     # the Mac's wired address
   - 192.168.20.10    # the same Mac's Wi-Fi address
+exclude_mode: advertisements
 ```
 
-Its mDNS is then dropped before Avahi sees it, so nothing of that host is ever
-reflected and it has nothing to argue with.
+`exclude_mode` decides what gets dropped, and the distinction matters if that
+machine needs to *use* cross-VLAN discovery:
 
-Three things to know before enabling it:
+| Mode | Drops | The excluded machine can still |
+|---|---|---|
+| `advertisements` (default) | its mDNS **responses** only | send queries, so it keeps discovering everything across VLANs |
+| `all` | every mDNS packet from it | nothing across VLANs |
+
+**For AirPlaying from a dual-homed Mac to an Apple TV on another VLAN, use
+`advertisements`.** Sending to an Apple TV only needs the Mac to *hear* the
+Apple TV's advertisements; the Mac's own advertisements never need to cross.
+Dropping just its responses keeps discovery working while removing the records
+it was arguing with.
+
+`advertisements` mode matches the DNS QR bit with iptables' `u32` module. If
+the kernel lacks it, the add-on logs a warning and falls back to dropping
+everything from that host — so check the log after enabling it.
+
+Three more things to know:
 
 - It installs **iptables rules in the host's network namespace**, in a
   dedicated `MDNS_REFLECTOR` chain. The chain is rebuilt on every start and
   removed when the service stops, but a force-killed container can leave it
   behind. To clear it by hand: `iptables -D INPUT -p udp --dport 5353 -j
   MDNS_REFLECTOR; iptables -F MDNS_REFLECTOR; iptables -X MDNS_REFLECTOR`.
-- Excluded hosts become invisible to **Home Assistant's own discovery** too,
-  not just to reflection. For a laptop that is usually fine; do not do it to a
-  device you want Home Assistant to find.
+- In `all` mode, excluded hosts become invisible to **Home Assistant's own
+  discovery** too. In `advertisements` mode Home Assistant will not see their
+  services either, since those are exactly the packets being dropped.
 - It is per-IP, so DHCP reassignment breaks it. Give those machines static
   leases.
 
@@ -176,6 +191,8 @@ interfaces:
   - end0.20     # VLAN 20 - phones, Macs
   - end0.30     # VLAN 30 - cameras
 reflect_filters:
+  - _airplay._tcp.local
+  - _raop._tcp.local
   - _hap._tcp.local
   - _matter._tcp.local
   - _matterc._udp.local
@@ -187,6 +204,7 @@ reflect_filters:
   - _printer._tcp.local
   - _pdl-datastream._tcp.local
 exclude_sources: []
+exclude_mode: advertisements
 reflect_ipv6: false
 reflect_between_ipv4_ipv6: false
 disallow_other_stacks: false

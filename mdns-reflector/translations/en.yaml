@@ -39,3 +39,9 @@ configuration:
       a machine on two reflected VLANs at once, such as a docked laptop, and
       list both of its addresses. These hosts also become invisible to Home
       Assistant's own discovery.
+  exclude_mode:
+    name: Exclusion mode
+    description: >-
+      advertisements drops only the excluded hosts' mDNS responses, so they
+      still discover services across VLANs themselves - use this to AirPlay
+      from a dual-homed Mac. all drops every mDNS packet from them.

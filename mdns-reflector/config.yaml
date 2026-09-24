@@ -29,15 +29,22 @@ options:
     - end0
     - end0.20
     - end0.30
-  # Empty = reflect every service type. The default below deliberately omits
-  # Apple's peer-to-peer and identity services (_companion-link, _rdlink,
-  # _device-info, _sleep-proxy, _airplay, _raop), because reflecting those makes
-  # a Mac that is on two reflected VLANs at once see its own advertisements
-  # coming back and rename itself endlessly.
+  # Empty = reflect every service type. The default below covers the common
+  # cross-VLAN cases, including AirPlay.
+  #
+  # It still omits Apple's peer-to-peer and identity services (_companion-link,
+  # _rdlink, _device-info, _sleep-proxy), which carry no discovery value across
+  # VLANs and are a conflict source for machines sitting on two reflected VLANs
+  # at once. AirPlay is a conflict source too, but it is usually the reason
+  # people run a reflector, so it stays in: pair it with exclude_sources for any
+  # dual-homed machine. See DOCS.md.
+  #
   # Avahi never reflects the host's own announcements (see
   # originates_from_local_iface in avahi-core/server.c), so Home Assistant's and
   # Scrypted's own services are excluded automatically.
   reflect_filters:
+    - _airplay._tcp.local
+    - _raop._tcp.local
     - _hap._tcp.local
     - _matter._tcp.local
     - _matterc._udp.local
@@ -51,9 +58,14 @@ options:
   # Hosts whose mDNS is dropped before Avahi sees it, by source IP. Use this for
   # a machine that is on two reflected VLANs at once (a docked laptop on wired
   # VLAN A and Wi-Fi VLAN B): list BOTH of its addresses. See DOCS.md - this
-  # installs firewall rules on the host and also hides those hosts from Home
-  # Assistant's own discovery.
+  # installs firewall rules on the host.
   exclude_sources: []
+  # What to drop for those hosts:
+  #   advertisements - only their mDNS responses, so they still cannot be
+  #                    reflected, but their queries still cross and they keep
+  #                    discovering everything else (needed to AirPlay OUT).
+  #   all            - every mDNS packet from them, including queries.
+  exclude_mode: advertisements
   reflect_ipv6: false
   reflect_between_ipv4_ipv6: false
   disallow_other_stacks: false
@@ -70,6 +82,7 @@ schema:
   # Source IPs whose mDNS never reaches the reflector.
   exclude_sources:
     - str
+  exclude_mode: list(advertisements|all)
   reflect_ipv6: bool
   reflect_between_ipv4_ipv6: bool
   # Leave false so Avahi coexists with Home Assistant's own mDNS stack on :5353.

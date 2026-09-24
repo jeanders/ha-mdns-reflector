@@ -17,14 +17,19 @@ First release. Not yet published, and not yet run end to end on real hardware.
 - `exclude_sources`: drops mDNS from given source IPs before Avahi sees it,
   via a dedicated `MDNS_REFLECTOR` iptables chain that is rebuilt on start and
   torn down on stop. Intended for hosts that sit on two reflected VLANs at once.
+- `exclude_mode`: `advertisements` (default) drops only those hosts' mDNS
+  responses, so they keep discovering across VLANs - needed to AirPlay out from
+  a dual-homed machine. `all` drops every mDNS packet from them. Response
+  matching uses iptables' `u32` module and falls back to `all` with a warning
+  where the kernel lacks it.
 
 ### Changed
 
 - `reflect_filters` now ships a curated default rather than reflecting
   everything. It omits Apple's peer-to-peer and identity services
-  (`_companion-link`, `_rdlink`, `_device-info`, `_sleep-proxy`, `_airplay`,
-  `_raop`), which cause dual-homed machines to rename themselves endlessly.
-  AirPlay is therefore not reflected out of the box.
+  (`_companion-link`, `_rdlink`, `_device-info`, `_sleep-proxy`). AirPlay
+  (`_airplay._tcp`, `_raop._tcp`) is reflected, since cross-VLAN AirPlay is a
+  primary use case; pair it with `exclude_sources` for dual-homed machines.
 
 ### Notes
 
