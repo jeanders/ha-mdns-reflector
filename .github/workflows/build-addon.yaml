@@ -86,7 +86,7 @@ jobs:
             ${{ needs.prepare.outputs.version }}
             latest
           labels: |
-            io.hass.type=addon
+            io.hass.type=app
             io.hass.name=${{ needs.prepare.outputs.name }}
             io.hass.description=${{ needs.prepare.outputs.description }}
             ${{ needs.prepare.outputs.url && format('io.hass.url={0}', needs.prepare.outputs.url) || '' }}

@@ -6,7 +6,7 @@ network segments.
 
 ## Installation
 
-1. In Home Assistant, go to **Settings → Add-ons → Add-on Store**.
+1. In Home Assistant, go to **Settings → Apps** (**Add-ons** before 2026.9).
 2. Open the ⋮ menu, choose **Repositories**, and add:
 
    ```
@@ -17,7 +17,7 @@ network segments.
 
 ## Add-ons in this repository
 
-| Add-on | Description |
+| App | Description |
 |---|---|
 | [mDNS Reflector](./mdns-reflector) | Avahi in reflector mode across VLAN interfaces, with per-service filtering. |
 

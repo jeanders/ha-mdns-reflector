@@ -26,7 +26,7 @@ discovered from another one.
 ## Prerequisites
 
 1. **The VLAN sub-interfaces must already exist on the host.** Create them with
-   `ha network vlan <iface> <vlan-id> ...` from the SSH & Web Terminal add-on.
+   `ha network vlan <iface> <vlan-id> ...` from the SSH & Web Terminal app.
    Do **not** give the secondary interfaces a gateway — one default route per
    host.
 2. **The switch port must be a trunk** carrying every VLAN involved. Keep the
@@ -42,14 +42,15 @@ discovered from another one.
 
 **From the repository (normal route):**
 
-1. **Settings → Add-ons → Add-on Store**, then ⋮ → **Repositories**, and add
+1. **Settings → Apps** (called **Add-ons** before Home Assistant 2026.9), then
+   ⋮ → **Repositories**, and add
    `https://github.com/jeanders/ha-mdns-reflector`.
 2. Install **mDNS Reflector** from the list.
 3. Set the options (below), then **Start**, and read the **Log** tab.
 
 **From a local copy (for development):** copy the `mdns-reflector` folder into
-the `/addons` share via the Samba or SSH add-on, then ⋮ → **Check for updates**
-and install it under **Local add-ons**.
+the `/addons` share via the Samba or SSH app, then ⋮ → **Check for updates**
+and install it under **Local**.
 
 Until a release has published images, installing builds the image on your own
 hardware. That takes a few minutes and pulls a Debian base image.
