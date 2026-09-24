@@ -17,6 +17,9 @@ First release. Not yet published, and not yet run end to end on real hardware.
 - `exclude_sources`: drops mDNS from given source IPs before Avahi sees it,
   via a dedicated `MDNS_REFLECTOR` iptables chain that is rebuilt on start and
   torn down on stop. Intended for hosts that sit on two reflected VLANs at once.
+- `exclude_names`: fixed-substring matching against mDNS packet contents via
+  iptables' `string` module, to exclude a host by name rather than by address.
+  Empty by default - see DOCS.md on why a "Mac" default misfires both ways.
 - `exclude_mode`: `advertisements` (default) drops only those hosts' mDNS
   responses, so they keep discovering across VLANs - needed to AirPlay out from
   a dual-homed machine. `all` drops every mDNS packet from them. Response

@@ -31,6 +31,13 @@ while read -r line; do
     fi
 done <<< "$(bashio::config 'exclude_sources')"
 
+declare -a exclude_names=()
+while read -r line; do
+    if bashio::var.has_value "${line}"; then
+        exclude_names+=("${line}")
+    fi
+done <<< "$(bashio::config 'exclude_names')"
+
 # ------------------------------------------------------------------ validate --
 if [[ "${#interfaces[@]}" -lt 2 ]]; then
     bashio::log.fatal "Need at least two interfaces to reflect between."
@@ -80,7 +87,7 @@ if command -v iptables &>/dev/null; then
     iptables -F "${EXCLUDE_CHAIN}" &>/dev/null || true
     iptables -X "${EXCLUDE_CHAIN}" &>/dev/null || true
 
-    if [[ "${#exclude_sources[@]}" -gt 0 ]]; then
+    if [[ "${#exclude_sources[@]}" -gt 0 || "${#exclude_names[@]}" -gt 0 ]]; then
         exclude_mode=$(bashio::config 'exclude_mode' 'advertisements')
 
         if iptables -N "${EXCLUDE_CHAIN}" &>/dev/null; then
@@ -111,6 +118,29 @@ if command -v iptables &>/dev/null; then
                     bashio::log.info "Excluding ${added} from ${src}"
                 else
                     bashio::log.error "Could not add exclusion for '${src}' - is it a valid address?"
+                fi
+            done
+
+            # Name-based exclusions. mDNS labels travel as plain ASCII, so a
+            # fixed-string match on the packet finds a host by its own name
+            # even as DHCP moves it between addresses.
+            for pattern in "${exclude_names[@]}"; do
+                declare -a name_rule=(-m string --algo bm --string "${pattern}")
+
+                if [[ "${exclude_mode}" == "advertisements" ]]; then
+                    if iptables -A "${EXCLUDE_CHAIN}" \
+                        -m u32 --u32 "0>>22&0x3C@8&0x8000=0x8000" \
+                        "${name_rule[@]}" -j DROP &>/dev/null
+                    then
+                        bashio::log.info "Excluding responses naming '${pattern}'"
+                        continue
+                    fi
+                fi
+
+                if iptables -A "${EXCLUDE_CHAIN}" "${name_rule[@]}" -j DROP &>/dev/null; then
+                    bashio::log.info "Excluding all mDNS naming '${pattern}'"
+                else
+                    bashio::log.error "Kernel has no string match; exclude_names is NOT active for '${pattern}'."
                 fi
             done
 

@@ -206,6 +206,49 @@ Three more things to know:
 - It is per-IP, so DHCP reassignment breaks it. Give those machines static
   leases.
 
+### 2b. `exclude_names` — excluding by name instead of address
+
+`exclude_sources` is per-IP, which DHCP breaks. `exclude_names` matches the raw
+mDNS packet for a fixed substring instead, so it follows a host across
+addresses:
+
+```yaml
+exclude_names:
+  - MacBook
+exclude_mode: advertisements
+```
+
+mDNS labels travel as plain ASCII, so a host's own name appears literally in
+the packets it sends. Combined with `advertisements` mode, this drops a
+machine's announcements while leaving its queries alone.
+
+**These are fixed strings, not regular expressions.** The kernel's `string`
+match has no regex support, and there is no regex anywhere in this path:
+Avahi's own `reflect-filters` is a compiled-in `strstr` allow-list. If the
+kernel lacks the `string` match the add-on logs an error and that entry is
+simply inactive — check the log.
+
+#### Why "MacBook" is not the default
+
+It is tempting to ship `exclude_names: [Mac]` and be done. Both directions go
+wrong:
+
+- **False negatives.** Plenty of Macs are not named after themselves. A machine
+  called `johns-laptop` or `studio` is missed entirely, and the symptom looks
+  identical to a broken filter.
+- **False positives.** Substrings do not respect device boundaries. `Mac`
+  matches an Apple TV named `Mac's Room`, a printer named `MacGregor`, and any
+  TXT value containing those letters. The result is a device that silently
+  stops being discoverable, with nothing in the logs pointing at the cause.
+
+Silently dropping a device because its name contains three particular letters
+is exactly the kind of magic that produces an unexplainable bug six months
+later. The option is here; pointing it at a name you have actually verified is
+your decision to make.
+
+A narrower alternative for Macs: turn off **AirPlay Receiver** (see above) so
+there is nothing to exclude in the first place.
+
 ### 3. The fix that needs no software
 
 Stop the machine being on two reflected VLANs. Put the dock's wired port on the

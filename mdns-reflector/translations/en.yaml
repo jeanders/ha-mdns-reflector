@@ -45,3 +45,9 @@ configuration:
       advertisements drops only the excluded hosts' mDNS responses, so they
       still discover services across VLANs themselves - use this to AirPlay
       from a dual-homed Mac. all drops every mDNS packet from them.
+  exclude_names:
+    name: Excluded names
+    description: >-
+      Fixed substrings (not regular expressions) matched against mDNS packet
+      contents, to exclude a host by name rather than by address. Substrings
+      over-match easily, so prefer a specific name you have verified.

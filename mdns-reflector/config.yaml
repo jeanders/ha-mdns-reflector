@@ -60,6 +60,12 @@ options:
   # VLAN A and Wi-Fi VLAN B): list BOTH of its addresses. See DOCS.md - this
   # installs firewall rules on the host.
   exclude_sources: []
+  # Substrings matched against the raw mDNS packet, for excluding hosts by name
+  # rather than by address - useful when DHCP moves them around. Fixed strings,
+  # not regular expressions: the kernel's string match has no regex support.
+  # Empty by default deliberately; see DOCS.md for why "MacBook" is not a safe
+  # default.
+  exclude_names: []
   # What to drop for those hosts:
   #   advertisements - only their mDNS responses, so they still cannot be
   #                    reflected, but their queries still cross and they keep
@@ -81,6 +87,9 @@ schema:
     - str
   # Source IPs whose mDNS never reaches the reflector.
   exclude_sources:
+    - str
+  # Substrings matched against mDNS packet contents.
+  exclude_names:
     - str
   exclude_mode: list(advertisements|all)
   reflect_ipv6: bool
