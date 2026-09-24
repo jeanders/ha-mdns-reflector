@@ -132,6 +132,38 @@ cross-VLAN AirPlay is usually the reason people run a reflector. They are also
 a conflict source for a dual-homed machine, which is what the next section is
 for.
 
+### 1b. Allowing individual devices, not just service types
+
+Filter entries are matched with `strstr` against the **service instance name**
+(`record->data.ptr.name` for PTR, `record->key->name` for SRV and TXT), not
+against the service type. So an entry can name one device:
+
+```yaml
+reflect_filters:
+  - Living Room._airplay._tcp.local   # this Apple TV's AirPlay only
+  - Living Room                       # or everything that device advertises
+  - _hap._tcp.local                   # plus all HomeKit, from anything
+```
+
+That is how you reflect an Apple TV's AirPlay while *not* reflecting a Mac's,
+even though both advertise the identical service types.
+
+Three caveats before relying on it:
+
+- **It does not stop hostname renaming.** A and AAAA records are reflected no
+  matter what the filter says, so a dual-homed machine keeps fighting over its
+  `.local` name. Only `exclude_sources` addresses that.
+- **Instance names drift.** A device that has been renamed, or that has lost a
+  conflict, is `Living Room (2)`. Match on a stable substring, and re-check
+  after renaming anything.
+- **Substrings over-match.** A filter of `Apple` matches every instance name
+  containing it. Be as specific as you can stand.
+
+A simpler option for Macs specifically: turn off **System Settings → General →
+AirDrop & Handoff → AirPlay Receiver**. The Mac then stops advertising
+`_airplay._tcp` and `_raop._tcp` altogether, so there is nothing to filter and
+nothing to conflict over, and it can still AirPlay *to* other devices.
+
 ### 2. `exclude_sources` (handles the hostname half, and AirPlay)
 
 List **both** addresses of the dual-homed machine:
