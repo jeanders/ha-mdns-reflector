@@ -1,9 +1,20 @@
 #!/usr/bin/env bashio
 # ==============================================================================
-# Take down the S6 supervision tree when the reflector fails
+# Clean up and take down the S6 supervision tree when the reflector fails
 # s6-overlay docs: https://github.com/just-containers/s6-overlay
 # ==============================================================================
 declare APP_EXIT_CODE=${1}
+readonly EXCLUDE_CHAIN="MDNS_REFLECTOR"
+
+# Remove the source-exclusion firewall rules. These live in the host's network
+# namespace, so they outlive the container if left in place.
+if command -v iptables &>/dev/null; then
+    while iptables -C INPUT -p udp --dport 5353 -j "${EXCLUDE_CHAIN}" &>/dev/null; do
+        iptables -D INPUT -p udp --dport 5353 -j "${EXCLUDE_CHAIN}"
+    done
+    iptables -F "${EXCLUDE_CHAIN}" &>/dev/null || true
+    iptables -X "${EXCLUDE_CHAIN}" &>/dev/null || true
+fi
 
 if [[ "${APP_EXIT_CODE}" -ne 0 ]] && [[ "${APP_EXIT_CODE}" -ne 256 ]]; then
   bashio::log.warning "Halt add-on with exit code ${APP_EXIT_CODE}"

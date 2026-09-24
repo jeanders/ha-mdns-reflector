@@ -76,7 +76,8 @@ there, not by being relayed. This add-on handles everything *else* on the wire.
 | Option | Type | Meaning |
 |---|---|---|
 | `interfaces` | list | Host interfaces to reflect between. At least two. Names must match the host exactly (`end0`, `end0.20`, `end0.30`). |
-| `reflect_filters` | list | Service types allowed to cross. **Empty (the default) reflects everything.** |
+| `reflect_filters` | list | Service types allowed to cross. Empty reflects everything. The shipped default is a curated list — see [Dual-homed hosts](#dual-homed-hosts-and-endless-renaming). Matching is a substring test, so `_hap._tcp` also matches `_hap._tcp.local`. |
+| `exclude_sources` | list | Source IPs whose mDNS is dropped before Avahi sees it. Empty by default. See [Dual-homed hosts](#dual-homed-hosts-and-endless-renaming). |
 | `reflect_ipv6` | bool | Reflect over IPv6 as well. |
 | `reflect_between_ipv4_ipv6` | bool | Bridge IPv4 and IPv6 mDNS. Off unless you know you want it. |
 | `disallow_other_stacks` | bool | Leave `false`. `true` stops Avahi sharing UDP 5353 with Home Assistant's own zeroconf stack. |
@@ -95,16 +96,97 @@ there, not by being relayed. This add-on handles everything *else* on the wire.
 | `_ipp._tcp.local`, `_printer._tcp.local` | Printers |
 | `_onvif._tcp.local`, `_rtsp._tcp.local` | IP cameras |
 
+## Dual-homed hosts and endless renaming
+
+If a machine sits on **two reflected VLANs at once** — a laptop docked to wired
+VLAN A while its Wi-Fi is on VLAN B — reflection makes it fight itself. Its
+announcement on one VLAN is copied onto the other, where it is still listening.
+It sees its own name claimed by what looks like a different machine, and
+renames itself. Forever.
+
+The damage is visible on the machine. On a Mac:
+
+```sh
+scutil --get ComputerName    # John's MacBook Pro (984)
+scutil --get LocalHostName   # Johns-MacBook-Pro-687
+```
+
+Those numbers are rename counts, and they are two *separate* conflicts:
+
+| What renamed | Driven by | Fixable with `reflect_filters`? |
+|---|---|---|
+| ComputerName, service instances | PTR / SRV / TXT | **Yes** |
+| LocalHostName, the `.local` name | A / AAAA | **No** |
+
+Avahi's filter only inspects PTR, SRV and TXT records; A and AAAA bypass it
+entirely. That is why this add-on offers two separate mechanisms.
+
+### 1. The default filter list (handles the service half)
+
+The shipped `reflect_filters` omits Apple's peer-to-peer and identity services
+— `_companion-link`, `_rdlink`, `_device-info`, `_sleep-proxy`, `_airplay`,
+`_raop` — which are the ones dual-homed Macs advertise about themselves. This
+stops the ComputerName churn without affecting HomeKit, Matter, Chromecast or
+printing.
+
+The cost: **AirPlay is not reflected by default.** If you need to AirPlay
+across VLANs, add `_airplay._tcp.local` and `_raop._tcp.local` back, and expect
+the rename behaviour to return on any dual-homed Mac.
+
+### 2. `exclude_sources` (handles the hostname half)
+
+List **both** addresses of the dual-homed machine:
+
+```yaml
+exclude_sources:
+  - 192.168.10.5     # the Mac's wired address
+  - 192.168.20.10    # the same Mac's Wi-Fi address
+```
+
+Its mDNS is then dropped before Avahi sees it, so nothing of that host is ever
+reflected and it has nothing to argue with.
+
+Three things to know before enabling it:
+
+- It installs **iptables rules in the host's network namespace**, in a
+  dedicated `MDNS_REFLECTOR` chain. The chain is rebuilt on every start and
+  removed when the service stops, but a force-killed container can leave it
+  behind. To clear it by hand: `iptables -D INPUT -p udp --dport 5353 -j
+  MDNS_REFLECTOR; iptables -F MDNS_REFLECTOR; iptables -X MDNS_REFLECTOR`.
+- Excluded hosts become invisible to **Home Assistant's own discovery** too,
+  not just to reflection. For a laptop that is usually fine; do not do it to a
+  device you want Home Assistant to find.
+- It is per-IP, so DHCP reassignment breaks it. Give those machines static
+  leases.
+
+### 3. The fix that needs no software
+
+Stop the machine being on two reflected VLANs. Put the dock's wired port on the
+same VLAN as its Wi-Fi, or turn Wi-Fi off when docked. This removes the cause
+rather than suppressing the symptom, and it is the only option with no
+trade-off.
+
 ## Suggested configuration
 
-The default reflects everything across all three VLANs:
+Three VLANs, with the default curated filter list:
 
 ```yaml
 interfaces:
   - end0        # VLAN 10 - Home Assistant / Scrypted
   - end0.20     # VLAN 20 - phones, Macs
   - end0.30     # VLAN 30 - cameras
-reflect_filters: []
+reflect_filters:
+  - _hap._tcp.local
+  - _matter._tcp.local
+  - _matterc._udp.local
+  - _esphomelib._tcp.local
+  - _googlecast._tcp.local
+  - _spotify-connect._tcp.local
+  - _ipp._tcp.local
+  - _ipps._tcp.local
+  - _printer._tcp.local
+  - _pdl-datastream._tcp.local
+exclude_sources: []
 reflect_ipv6: false
 reflect_between_ipv4_ipv6: false
 disallow_other_stacks: false
@@ -112,14 +194,9 @@ allow_point_to_point: false
 log_level: info
 ```
 
-To narrow it later, list only what you want to cross:
-
-```yaml
-reflect_filters:
-  - _hap._tcp.local
-  - _companion-link._tcp.local
-  - _sleep-proxy._udp.local
-```
+To reflect everything instead, set `reflect_filters: []` — and read
+[Dual-homed hosts](#dual-homed-hosts-and-endless-renaming) first, because
+that is what brings the renaming behaviour back.
 
 **One thing to keep in mind about the camera VLAN.** Reflecting everything into
 and out of VLAN 30 carries camera announcements across the boundary that VLAN

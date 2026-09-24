@@ -14,6 +14,18 @@ First release. Not yet published, and not yet run end to end on real hardware.
   host, and names the `ha network vlan` command needed to create one.
 - Build-time assertion that the packaged Avahi supports `reflect-filters`.
 
+- `exclude_sources`: drops mDNS from given source IPs before Avahi sees it,
+  via a dedicated `MDNS_REFLECTOR` iptables chain that is rebuilt on start and
+  torn down on stop. Intended for hosts that sit on two reflected VLANs at once.
+
+### Changed
+
+- `reflect_filters` now ships a curated default rather than reflecting
+  everything. It omits Apple's peer-to-peer and identity services
+  (`_companion-link`, `_rdlink`, `_device-info`, `_sleep-proxy`, `_airplay`,
+  `_raop`), which cause dual-homed machines to rename themselves endlessly.
+  AirPlay is therefore not reflected out of the box.
+
 ### Notes
 
 - Publishing is disabled in the generated Avahi config, so the add-on relays

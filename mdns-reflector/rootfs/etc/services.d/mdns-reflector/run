@@ -24,6 +24,13 @@ while read -r line; do
     fi
 done <<< "$(bashio::config 'reflect_filters')"
 
+declare -a exclude_sources=()
+while read -r line; do
+    if bashio::var.has_value "${line}"; then
+        exclude_sources+=("${line}")
+    fi
+done <<< "$(bashio::config 'exclude_sources')"
+
 # ------------------------------------------------------------------ validate --
 if [[ "${#interfaces[@]}" -lt 2 ]]; then
     bashio::log.fatal "Need at least two interfaces to reflect between."
@@ -51,6 +58,45 @@ if [[ "${#missing[@]}" -gt 0 ]]; then
     bashio::log.error "  ha network vlan end0 20 --ipv4-method static \\"
     bashio::log.error "     --ipv4-address 192.168.20.5/24"
     bashio::exit.nok "Missing interfaces: ${missing[*]}"
+fi
+
+# ---------------------------------------------------------- source excludes --
+# A host sitting on two reflected VLANs at once (docked laptop: wired on one,
+# Wi-Fi on the other) receives its own reflected announcements and treats them
+# as a name conflict, renaming itself forever. Avahi cannot filter this: A
+# records bypass reflect-filters entirely, and the packets are not local to
+# this host, so originates_from_local_iface does not apply. Dropping that
+# host's mDNS before Avahi sees it is the only lever available here.
+#
+# Rules live in a dedicated chain that is rebuilt from scratch on every start,
+# so removing an address from the option really removes its rule.
+readonly EXCLUDE_CHAIN="MDNS_REFLECTOR"
+
+if command -v iptables &>/dev/null; then
+    # Detach and drop any chain left behind by a previous run.
+    while iptables -C INPUT -p udp --dport 5353 -j "${EXCLUDE_CHAIN}" &>/dev/null; do
+        iptables -D INPUT -p udp --dport 5353 -j "${EXCLUDE_CHAIN}"
+    done
+    iptables -F "${EXCLUDE_CHAIN}" &>/dev/null || true
+    iptables -X "${EXCLUDE_CHAIN}" &>/dev/null || true
+
+    if [[ "${#exclude_sources[@]}" -gt 0 ]]; then
+        if iptables -N "${EXCLUDE_CHAIN}" &>/dev/null; then
+            for src in "${exclude_sources[@]}"; do
+                if iptables -A "${EXCLUDE_CHAIN}" -s "${src}" -j DROP &>/dev/null; then
+                    bashio::log.info "Excluding mDNS from ${src}"
+                else
+                    bashio::log.error "Could not add exclusion for '${src}' - is it a valid address?"
+                fi
+            done
+            iptables -I INPUT -p udp --dport 5353 -j "${EXCLUDE_CHAIN}"
+            bashio::log.notice "Excluded hosts are hidden from Home Assistant's own discovery too."
+        else
+            bashio::log.error "Could not create the ${EXCLUDE_CHAIN} chain; exclusions are NOT active."
+        fi
+    fi
+elif [[ "${#exclude_sources[@]}" -gt 0 ]]; then
+    bashio::log.error "exclude_sources is set but iptables is unavailable; exclusions are NOT active."
 fi
 
 # --------------------------------------------------------------------- build --

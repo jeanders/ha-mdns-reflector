@@ -32,3 +32,10 @@ configuration:
     description: >-
       Set to debug to log the generated Avahi configuration and run the daemon
       with verbose output.
+  exclude_sources:
+    name: Excluded source addresses
+    description: >-
+      IP addresses whose mDNS is dropped before the reflector sees it. Use for
+      a machine on two reflected VLANs at once, such as a docked laptop, and
+      list both of its addresses. These hosts also become invisible to Home
+      Assistant's own discovery.

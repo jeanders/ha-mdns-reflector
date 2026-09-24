@@ -9,6 +9,7 @@ RUN apt-get update \
         avahi-daemon \
         avahi-utils \
         iproute2 \
+        iptables \
     && rm -rf /var/lib/apt/lists/*
 
 # reflect-filters is a Debian addition to Avahi, not upstream. Fail the build
