@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.0.1 - Unreleased
+
+### Fixed
+
+- The add-on failed to start with a stock configuration. Avahi's config parser
+  reads lines into a 128-byte buffer, and the default `reflect-filters=` line
+  was 277 characters, so it was split mid-string and Avahi died with
+  `Missing assignment in /etc/avahi/avahi-daemon.conf:28`. Found by running it
+  on real hardware.
+
+### Changed
+
+- Default `reflect_filters` now uses short substring stems (`_hap.`, `_matter`,
+  `_ipp`) instead of full service types, generating a 74-character line.
+- Start-up now validates the generated line length and fails with an
+  explanation, instead of letting Avahi fail cryptically.
+
 ## 1.0.0 - Unreleased
 
 First release. Not yet published, and not yet run end to end on real hardware.

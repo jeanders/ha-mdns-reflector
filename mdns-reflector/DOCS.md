@@ -85,6 +85,36 @@ there, not by being relayed. This add-on handles everything *else* on the wire.
 | `allow_point_to_point` | bool | Include PPP/VPN-type interfaces. |
 | `log_level` | enum | `debug` passes `--debug` to Avahi; anything else is normal logging. |
 
+### Keep the filter list short
+
+Avahi's config parser reads each line into a 128-byte buffer:
+
+```c
+char ln[128];
+if (!(fgets(ln, sizeof(ln), f)))
+```
+
+The generated `reflect-filters=` line has to fit. A longer one is split
+mid-string and the tail parsed as a new line, which fails with a confusing
+`Missing assignment in /etc/avahi/avahi-daemon.conf` error. Splitting it across
+several `reflect-filters=` lines does not help either — the parser frees and
+replaces the list on each occurrence, so only the last one survives.
+
+This add-on checks the length at start-up and refuses to run with an
+explanation rather than letting Avahi fail cryptically.
+
+Because matching is a substring test, short stems buy a lot of room:
+
+| Stem | Covers |
+|---|---|
+| `_hap.` | `_hap._tcp.local` and `_hap._udp.local` |
+| `_matter` | `_matter._tcp.local` and `_matterc._udp.local` |
+| `_ipp` | `_ipp._tcp.local` and `_ipps._tcp.local` |
+| `_airplay.` | `_airplay._tcp.local` |
+
+The shipped default comes to 74 characters, leaving room to add a few of your
+own.
+
 ### Service types worth knowing
 
 | Service | Used by |
@@ -268,19 +298,13 @@ interfaces:
   - end0.20     # VLAN 20 - phones, Macs
   - end0.30     # VLAN 30 - cameras
 reflect_filters:
-  - _airplay._tcp.local
-  - _raop._tcp.local
-  - _hap._tcp.local
-  - _hap._udp.local
-  - _matter._tcp.local
-  - _matterc._udp.local
-  - _esphomelib._tcp.local
-  - _googlecast._tcp.local
-  - _spotify-connect._tcp.local
-  - _ipp._tcp.local
-  - _ipps._tcp.local
-  - _printer._tcp.local
-  - _pdl-datastream._tcp.local
+  - _hap.
+  - _airplay.
+  - _raop.
+  - _matter
+  - _googlecast.
+  - _printer.
+  - _ipp
 exclude_sources: []
 exclude_mode: advertisements
 reflect_ipv6: false

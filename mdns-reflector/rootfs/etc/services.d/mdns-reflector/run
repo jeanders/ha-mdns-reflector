@@ -161,6 +161,23 @@ fi
 # --------------------------------------------------------------------- build --
 if [[ "${#filters[@]}" -gt 0 ]]; then
     filter_line="reflect-filters=$(IFS=,; echo "${filters[*]}")"
+
+    # Avahi's config parser reads each line into a 128-byte buffer
+    # (char ln[128] in avahi-daemon/main.c). A longer line is split, and the
+    # tail is parsed as a new line, which fails with a confusing
+    # "Missing assignment" error. Catch it here with an explanation instead.
+    # Splitting across several reflect-filters= lines does not help: the
+    # parser frees and replaces the list for each occurrence.
+    if [[ "${#filter_line}" -gt 120 ]]; then
+        bashio::log.fatal "reflect_filters is too long: the generated line is ${#filter_line} characters."
+        bashio::log.fatal "Avahi's parser reads config lines into a 128-byte buffer, so it must stay under that."
+        bashio::log.fatal "Matching is a substring test, so use short stems instead of full service types:"
+        bashio::log.fatal "  '_hap.' covers _hap._tcp.local and _hap._udp.local"
+        bashio::log.fatal "  '_matter' covers _matter._tcp.local and _matterc._udp.local"
+        bashio::log.fatal "  '_ipp' covers _ipp._tcp.local and _ipps._tcp.local"
+        bashio::exit.nok "Shorten reflect_filters, or empty it to reflect everything."
+    fi
+
     bashio::log.info "Reflecting only: ${filters[*]}"
 else
     bashio::log.info "Reflecting all service types between ${interfaces[*]}"
