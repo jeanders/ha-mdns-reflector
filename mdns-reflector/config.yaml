@@ -1,7 +1,7 @@
 ---
 # https://developers.home-assistant.io/docs/add-ons/configuration#add-on-config
 name: mDNS Reflector
-version: "1.0.1"
+version: "1.0.2"
 slug: mdns_reflector
 description: >-
   Reflect mDNS/Bonjour between VLAN interfaces with Avahi, so HomeKit,
