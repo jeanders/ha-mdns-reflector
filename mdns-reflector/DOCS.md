@@ -52,8 +52,8 @@ discovered from another one.
 the `/addons` share via the Samba or SSH app, then ⋮ → **Check for updates**
 and install it under **Local**.
 
-Until a release has published images, installing builds the image on your own
-hardware. That takes a few minutes and pulls a Debian base image.
+Installs pull a prebuilt image for your architecture (amd64 or aarch64). A
+local copy in `/addons` builds on the host instead, which takes a few minutes.
 
 ## What is never reflected
 

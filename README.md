@@ -42,8 +42,7 @@ Full documentation is in [the add-on's docs](./mdns-reflector/DOCS.md).
 
 ## Status
 
-**Not yet released.** See [the changelog](./mdns-reflector/CHANGELOG.md) for
-what is and isn't verified.
+Released. See [the changelog](./mdns-reflector/CHANGELOG.md).
 
 ## Releasing
 
@@ -53,9 +52,12 @@ pushes and pull requests only validate that the image builds.
 1. Bump `version` in `mdns-reflector/config.yaml` and update the changelog.
 2. Publish a GitHub release whose tag matches that version (`1.1.0` or
    `v1.1.0`). The workflow fails the release if the two disagree.
-3. After the first successful release, uncomment `image:` in
-   `mdns-reflector/config.yaml` so users pull prebuilt images instead of
-   building on their own hardware.
+3. The workflow builds amd64 and aarch64 images, pushes them to
+   `ghcr.io/jeanders/mdns-reflector`, and publishes a multi-arch manifest.
+   Users then pull prebuilt images instead of building on their own hardware.
+
+`image:` in `mdns-reflector/config.yaml` must stay set: the release build reads
+it to know where to push.
 
 ## License
 
