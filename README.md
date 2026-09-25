@@ -6,6 +6,11 @@ network segments.
 
 ## Installation
 
+[![Open your Home Assistant instance and show the add add-on repository dialog with this repository URL pre-filled.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fjeanders%2Fha-mdns-reflector)
+
+Click the badge to add this repository to your Home Assistant in one step, or
+add it manually:
+
 1. In Home Assistant, go to **Settings → Apps** (**Add-ons** before 2026.9).
 2. Open the ⋮ menu, choose **Repositories**, and add:
 
