@@ -38,6 +38,91 @@ while read -r line; do
     fi
 done <<< "$(bashio::config 'exclude_names')"
 
+readonly EXCLUDE_CHAIN="MDNS_REFLECTOR"
+
+# Detach and drop any exclusion chain left behind by a previous run. Called in
+# both modes, so switching from reflector to proxy mode leaves no rules behind.
+teardown_exclusions() {
+    if ! command -v iptables &>/dev/null; then
+        return 0
+    fi
+    while iptables -C INPUT -p udp --dport 5353 -j "${EXCLUDE_CHAIN}" &>/dev/null; do
+        iptables -D INPUT -p udp --dport 5353 -j "${EXCLUDE_CHAIN}"
+    done
+    iptables -F "${EXCLUDE_CHAIN}" &>/dev/null || true
+    iptables -X "${EXCLUDE_CHAIN}" &>/dev/null || true
+}
+
+# Log an interface and its IPv4 address. Returns 1 if it is missing or has no
+# address, so call it inside an `if` (bashio runs with errexit).
+check_interface() {
+    local iface="$1"
+    local found
+    if ! ip -o link show "${iface}" &>/dev/null; then
+        bashio::log.error "Interface ${iface}: not found on the host."
+        return 1
+    fi
+    found=$(ip -4 -o addr show "${iface}" 2>/dev/null | awk '{print $4}' | paste -sd, -)
+    if bashio::var.has_value "${found}"; then
+        bashio::log.info "Interface ${iface}: present (${found})"
+        return 0
+    fi
+    bashio::log.error "Interface ${iface}: present, but has no IPv4 address."
+    return 1
+}
+
+# ---------------------------------------------------------------- proxy mode --
+# Proxy mode learns services on the source interfaces and re-publishes them on
+# the target interfaces, answering queries itself (by unicast when asked).
+# It exists for networks whose Wi-Fi never delivers downstream multicast, where
+# reflected packets can never reach a wireless client. Avahi does not run.
+mode=$(bashio::config 'mode' 'reflector')
+
+if [[ "${mode}" == "proxy" ]]; then
+    teardown_exclusions
+
+    declare -a proxy_sources=()
+    while read -r line; do
+        if bashio::var.has_value "${line}"; then
+            proxy_sources+=("${line}")
+        fi
+    done <<< "$(bashio::config 'proxy_sources')"
+
+    declare -a proxy_targets=()
+    while read -r line; do
+        if bashio::var.has_value "${line}"; then
+            proxy_targets+=("${line}")
+        fi
+    done <<< "$(bashio::config 'proxy_targets')"
+
+    if [[ "${#proxy_sources[@]}" -lt 1 || "${#proxy_targets[@]}" -lt 1 ]]; then
+        bashio::exit.nok "Proxy mode needs at least one proxy_source and one proxy_target."
+    fi
+
+    # Learning and publishing on the same interface would make the proxy hear
+    # its own copies and keep a service alive after the real device left.
+    for src in "${proxy_sources[@]}"; do
+        for dst in "${proxy_targets[@]}"; do
+            if [[ "${src}" == "${dst}" ]]; then
+                bashio::exit.nok "${src} is both a proxy_source and a proxy_target; they must not overlap."
+            fi
+        done
+    done
+
+    proxy_ok=true
+    for iface in "${proxy_sources[@]}" "${proxy_targets[@]}"; do
+        if ! check_interface "${iface}"; then
+            proxy_ok=false
+        fi
+    done
+    if [[ "${proxy_ok}" != "true" ]]; then
+        bashio::exit.nok "Every proxy interface must exist on the host and have an IPv4 address."
+    fi
+
+    bashio::log.info "Proxy mode: learning on ${proxy_sources[*]}, publishing on ${proxy_targets[*]}"
+    exec /opt/venv/bin/python3 /opt/mdns-proxy/mdns_proxy.py /data/options.json
+fi
+
 # ------------------------------------------------------------------ validate --
 if [[ "${#interfaces[@]}" -lt 2 ]]; then
     bashio::log.fatal "Need at least two interfaces to reflect between."
@@ -77,16 +162,9 @@ fi
 #
 # Rules live in a dedicated chain that is rebuilt from scratch on every start,
 # so removing an address from the option really removes its rule.
-readonly EXCLUDE_CHAIN="MDNS_REFLECTOR"
+teardown_exclusions
 
 if command -v iptables &>/dev/null; then
-    # Detach and drop any chain left behind by a previous run.
-    while iptables -C INPUT -p udp --dport 5353 -j "${EXCLUDE_CHAIN}" &>/dev/null; do
-        iptables -D INPUT -p udp --dport 5353 -j "${EXCLUDE_CHAIN}"
-    done
-    iptables -F "${EXCLUDE_CHAIN}" &>/dev/null || true
-    iptables -X "${EXCLUDE_CHAIN}" &>/dev/null || true
-
     if [[ "${#exclude_sources[@]}" -gt 0 || "${#exclude_names[@]}" -gt 0 ]]; then
         exclude_mode=$(bashio::config 'exclude_mode' 'advertisements')
 

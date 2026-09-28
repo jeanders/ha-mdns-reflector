@@ -10,7 +10,16 @@ RUN apt-get update \
         avahi-utils \
         iproute2 \
         iptables \
+        python3 \
+        python3-venv \
     && rm -rf /var/lib/apt/lists/*
+
+# Proxy mode. Pinned: mdns_proxy.py patches zeroconf's listen-socket factory
+# (zeroconf._utils.net.new_listen_socket), so an upgrade must be re-verified.
+ARG ZEROCONF_VERSION=0.151.3
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir "zeroconf==${ZEROCONF_VERSION}" \
+    && /opt/venv/bin/python3 -c "from zeroconf._utils import net; assert callable(net.new_listen_socket)"
 
 # reflect-filters is a Debian addition to Avahi, not upstream. Fail the build
 # rather than ship an image that silently ignores the filter configuration.
@@ -27,5 +36,5 @@ COPY rootfs /
 
 LABEL \
     org.opencontainers.image.title="Home Assistant Add-on: mDNS Reflector" \
-    org.opencontainers.image.description="Reflect mDNS/Bonjour between VLAN interfaces using Avahi" \
+    org.opencontainers.image.description="Reflect or proxy mDNS/Bonjour between VLAN interfaces" \
     org.opencontainers.image.licenses="MIT"

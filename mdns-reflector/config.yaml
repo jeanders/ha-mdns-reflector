@@ -1,7 +1,7 @@
 ---
 # https://developers.home-assistant.io/docs/add-ons/configuration#add-on-config
 name: mDNS Reflector
-version: "1.0.2"
+version: "1.1.0"
 slug: mdns_reflector
 description: >-
   Reflect mDNS/Bonjour between VLAN interfaces with Avahi, so HomeKit,
@@ -25,6 +25,11 @@ privileged:
   - NET_RAW
 
 options:
+  # reflector - relay multicast between VLANs with Avahi (the original mode).
+  # proxy     - learn services on proxy_sources and answer for them on
+  #             proxy_targets, like a switch's service-discovery gateway. Use
+  #             this when your Wi-Fi never delivers multicast to clients.
+  mode: reflector
   interfaces:
     - end0
     - end0.20
@@ -87,8 +92,22 @@ options:
   disallow_other_stacks: false
   allow_point_to_point: false
   log_level: info
+  # Proxy mode only. Learn on these interfaces...
+  proxy_sources:
+    - end0
+  # ...and publish on these. The two lists must not overlap.
+  proxy_targets:
+    - end0.20
+  proxy_services:
+    - _ipp._tcp.local.
+    - _ipps._tcp.local.
+  # Subtypes to learn and republish for every service. AirPrint on iPhone and
+  # iPad browses _universal._sub._ipp._tcp, so printers need it.
+  proxy_subtypes:
+    - _universal
 
 schema:
+  mode: list(reflector|proxy)
   # Host interfaces to reflect between. At least two, or there is nothing to do.
   interfaces:
     - str
@@ -108,3 +127,11 @@ schema:
   disallow_other_stacks: bool
   allow_point_to_point: bool
   log_level: list(debug|info|notice|warn|error|fatal)
+  proxy_sources:
+    - str
+  proxy_targets:
+    - str
+  proxy_services:
+    - str
+  proxy_subtypes:
+    - str

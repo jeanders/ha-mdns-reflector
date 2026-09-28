@@ -23,6 +23,72 @@ Install this add-on for the cases multihoming can't cover: a Lutron bridge, an
 Apple TV, a printer or a camera that lives on a different VLAN and must be
 discovered from another one.
 
+## Reflector or proxy?
+
+The add-on has two modes, and which one works depends on your Wi-Fi.
+
+| Mode | How it works | Needs |
+|---|---|---|
+| `reflector` (default) | Avahi relays multicast mDNS packets from one VLAN onto another. | Clients must receive **multicast** from the wired network. |
+| `proxy` | Learns services on the source VLANs and answers queries for them on the target VLANs itself, like a switch's service-discovery gateway. | Clients only need to receive **unicast** replies. |
+
+Some Wi-Fi never delivers downstream multicast to clients. Controller-based
+systems are the usual culprit; Cisco Catalyst 9800 with FlexConnect local
+switching is a confirmed case. On those networks the reflector can be working
+perfectly, matching and relaying records, while no wireless client ever
+receives them. Proxy mode exists for exactly that situation.
+
+**How to tell which you need:** on a Wi-Fi client, capture mDNS for 30 seconds
+while browsing for something on another VLAN:
+
+```sh
+sudo tcpdump -i en0 -n 'udp port 5353 and not src host <this machine\'s IP>'
+```
+
+If you see multicast packets from other devices, the reflector will work. If
+the only packets from other hosts are **unicast** replies addressed to your own
+IP, your Wi-Fi drops multicast and you need proxy mode.
+
+### Proxy mode
+
+```yaml
+mode: proxy
+proxy_sources:
+  - end0          # VLAN the printers are on
+proxy_targets:
+  - end0.20       # Wi-Fi client VLAN
+proxy_services:
+  - _ipp._tcp.local.
+  - _ipps._tcp.local.
+proxy_subtypes:
+  - _universal    # AirPrint on iPhone and iPad browses this
+```
+
+How it behaves:
+
+- **Directional.** It learns on `proxy_sources` and publishes on
+  `proxy_targets`, and the two lists must not overlap. Learning on an interface
+  it also publishes to would let it hear its own copies and keep a service
+  alive after the real device disappears.
+- **It never publishes a host onto a VLAN where that host already has an
+  address.** A laptop on wired VLAN 10 and Wi-Fi VLAN 20 at once is left alone
+  on both, which prevents the endless-renaming problem described below.
+- **It never proxies this host's own services.** Home Assistant and Scrypted
+  already advertise on every VLAN the host is on.
+- **Unicast replies depend on the client asking for them.** Apple devices
+  request a unicast reply on the first query of every lookup, which is what
+  proxy mode relies on. Later refresh queries ask for multicast; on Wi-Fi that
+  drops multicast those answers are lost, so entries can age out of a client's
+  cache between lookups. A fresh lookup - opening a print dialog, printing -
+  asks again and gets an answer.
+- **Removals are slow to reach Wi-Fi clients.** When a device disappears the
+  proxy withdraws it with a multicast goodbye, which such networks drop.
+  Clients forget it when their cached record expires.
+- `exclude_sources` and `exclude_names` apply in proxy mode too, matched
+  against the learned service's addresses, instance name and host name.
+  `exclude_mode` and the reflector-only options are ignored.
+- IPv4 only.
+
 ## Prerequisites
 
 1. **The VLAN sub-interfaces must already exist on the host.** Create them with

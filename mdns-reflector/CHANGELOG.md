@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.1.0 - 2026-09-28
+
+### Added
+
+- **Proxy mode** (`mode: proxy`). Learns services on `proxy_sources` and
+  answers for them on `proxy_targets` itself, the way a switch's
+  service-discovery gateway does, instead of relaying multicast. Built for
+  Wi-Fi that never delivers downstream multicast to clients, where the
+  reflector cannot reach wireless clients at all. Starts with printers:
+  `_ipp` and `_ipps`, plus the `_universal` subtype that AirPrint needs.
+- Proxy mode never publishes a host onto a VLAN where it already has an
+  address, so machines on two VLANs at once do not rename themselves, and it
+  never proxies the add-on host's own services.
+
+### Changed
+
+- The exclusion firewall chain is now torn down in both modes, so switching
+  from reflector to proxy mode leaves no rules behind.
+- The image now includes Python and a pinned `zeroconf` for proxy mode.
+
+### Known limitations
+
+- On Wi-Fi that drops multicast, only a client's first query in each lookup
+  gets an answer, and removals reach clients only when their cache expires.
+  See DOCS.md.
+- Reflector mode cannot reach clients on such networks. This was found on a
+  Cisco Catalyst 9800 with FlexConnect local switching: reflected records were
+  matched and relayed correctly but never arrived at any wireless client.
+
 ## 1.0.2 - 2026-09-24
 
 First public release. Verified on a Raspberry Pi running Home Assistant OS

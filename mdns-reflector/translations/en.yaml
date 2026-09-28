@@ -51,3 +51,30 @@ configuration:
       Fixed substrings (not regular expressions) matched against mDNS packet
       contents, to exclude a host by name rather than by address. Substrings
       over-match easily, so prefer a specific name you have verified.
+  mode:
+    name: Mode
+    description: >-
+      reflector relays multicast between VLANs with Avahi. proxy learns
+      services on the proxy sources and answers for them on the proxy targets,
+      like a switch's service-discovery gateway - use it when your Wi-Fi never
+      delivers multicast to clients.
+  proxy_sources:
+    name: Proxy sources
+    description: >-
+      Proxy mode only. Interfaces to learn services on, such as the VLAN your
+      printers live on. Must not overlap with the proxy targets.
+  proxy_targets:
+    name: Proxy targets
+    description: >-
+      Proxy mode only. Interfaces to publish the learned services on, such as
+      your Wi-Fi client VLAN.
+  proxy_services:
+    name: Proxied services
+    description: >-
+      Proxy mode only. Full service types to learn and republish, for example
+      _ipp._tcp.local. for printers.
+  proxy_subtypes:
+    name: Proxied subtypes
+    description: >-
+      Proxy mode only. Subtypes to learn and republish for every service.
+      _universal is what iPhones and iPads browse for AirPrint.

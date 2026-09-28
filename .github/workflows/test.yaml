@@ -1,0 +1,36 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  proxy-logic:
+    name: Proxy mode logic
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code from GitHub
+        uses: actions/checkout@v7.0.1
+
+      - name: Run unit tests
+        run: python3 -m unittest discover -s tests -v
+
+  shell:
+    name: Shell syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code from GitHub
+        uses: actions/checkout@v7.0.1
+
+      - name: bash -n on the s6 service scripts
+        run: |
+          for f in mdns-reflector/rootfs/etc/services.d/*/run mdns-reflector/rootfs/etc/services.d/*/finish; do
+            bash -n "$f" && echo "ok  $f"
+          done
