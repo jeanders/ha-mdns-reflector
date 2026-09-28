@@ -8,6 +8,11 @@ import pathlib
 import sys
 import unittest
 
+try:
+    import zeroconf
+except ImportError:  # the pure helpers are still tested without it
+    zeroconf = None
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent
                        / "mdns-reflector" / "rootfs" / "opt" / "mdns-proxy"))
 
@@ -48,6 +53,29 @@ class TypeNames(unittest.TestCase):
             ["_ipp._tcp.local.", "_universal._sub._ipp._tcp.local.",
              "_ipps._tcp.local.", "_universal._sub._ipps._tcp.local."],
         )
+
+    def test_service_spec_uses_dns_sd_notation(self):
+        self.assertEqual(p.parse_service_spec("_ipp._tcp,_universal"),
+                         ("_ipp._tcp.local.", ["_universal"]))
+        self.assertEqual(p.parse_service_spec(" _airplay._tcp.local. "),
+                         ("_airplay._tcp.local.", []))
+
+    def test_per_service_subtypes_apply_only_to_their_service(self):
+        self.assertEqual(
+            p.browse_types(["_ipp._tcp,_universal", "_airplay._tcp"], []),
+            ["_ipp._tcp.local.", "_universal._sub._ipp._tcp.local.", "_airplay._tcp.local."],
+        )
+
+    def test_global_subtype_is_not_duplicated(self):
+        self.assertEqual(
+            p.browse_types(["_ipp._tcp,_universal"], ["_universal"]),
+            ["_ipp._tcp.local.", "_universal._sub._ipp._tcp.local."],
+        )
+
+    def test_instance_label(self):
+        self.assertEqual(p.instance_label("Living Room._airplay._tcp.local.", "_airplay._tcp.local."),
+                         "Living Room")
+        self.assertEqual(p.instance_label("Odd.name", "_airplay._tcp.local."), "Odd.name")
 
 
 class Planning(unittest.TestCase):
@@ -105,6 +133,109 @@ class NameExclusion(unittest.TestCase):
     def test_non_matching(self):
         self.assertFalse(p.name_excluded("HP LaserJet CP1025nw._ipp._tcp.local.",
                                          "HomePrinter.local.", ["MacBook"]))
+
+
+class RoamingDevices(unittest.TestCase):
+    PREFIXES = ["Mac", "iMac", "iPhone", "iPad", "iPod"]
+
+    def test_model_keys_from_each_apple_service(self):
+        self.assertEqual(p.txt_models({b"model": b"Mac16,7", b"deviceid": b"x"}), ["Mac16,7"])
+        self.assertEqual(p.txt_models({b"am": b"AppleTV6,2"}), ["AppleTV6,2"])
+        self.assertEqual(p.txt_models({b"rpMd": b"iPhone14,2"}), ["iPhone14,2"])
+        self.assertEqual(p.txt_models({b"model": None, b"ty": b"HP"}), [])
+        self.assertEqual(p.txt_models(None), [])
+
+    def test_laptops_and_phones_roam(self):
+        for model in ("MacBookPro18,1", "Mac16,7", "Macmini9,1", "iMac21,1", "iPhone14,2", "iPad13,4"):
+            self.assertEqual(p.roaming_model([model], self.PREFIXES), model)
+
+    def test_fixed_devices_do_not(self):
+        for model in ("AppleTV6,2", "AudioAccessory5,1", "AVR-X1800H", "HP LaserJet"):
+            self.assertIsNone(p.roaming_model([model], self.PREFIXES))
+
+    def test_empty_prefix_list_disables_the_check(self):
+        self.assertIsNone(p.roaming_model(["MacBookPro18,1"], []))
+        self.assertIsNone(p.roaming_model(["MacBookPro18,1"], [""]))
+
+
+@unittest.skipIf(zeroconf is None, "python-zeroconf not installed")
+class UnicastAnswers(unittest.TestCase):
+    def setUp(self):
+        import socket
+        from zeroconf import ServiceInfo, const
+        self.const = const
+        self.info = ServiceInfo(
+            "_airplay._tcp.local.", "Living Room._airplay._tcp.local.",
+            addresses=[socket.inet_aton("192.168.30.35")], port=7000,
+            properties={"model": "AppleTV6,2"}, server="Living-Room-2.local.",
+        )
+        self.sub = ServiceInfo(
+            "_universal._sub._ipp._tcp.local.", "HP LaserJet CP1025nw._ipp._tcp.local.",
+            addresses=[socket.inet_aton(PRINTER)], port=631,
+            properties={"ty": "HP"}, server="HomePrinter.local.",
+        )
+
+    def q(self, name, qtype):
+        from zeroconf import DNSQuestion
+        return DNSQuestion(name, qtype, self.const._CLASS_IN)
+
+    def test_browse_answers_ptr_with_srv_txt_a_additionals(self):
+        answers, extras = p.select_answers([self.q("_airplay._tcp.local.", self.const._TYPE_PTR)],
+                                           [], [self.info, self.sub])
+        self.assertEqual(answers, [self.info.dns_pointer()])
+        self.assertEqual(set(extras), {self.info.dns_service(), self.info.dns_text(),
+                                       *self.info.dns_addresses()})
+
+    def test_subtype_browse(self):
+        answers, _ = p.select_answers(
+            [self.q("_universal._sub._ipp._tcp.local.", self.const._TYPE_PTR)], [], [self.info, self.sub])
+        self.assertEqual(answers, [self.sub.dns_pointer()])
+
+    def test_resolve_and_address(self):
+        answers, _ = p.select_answers(
+            [self.q("living room._airplay._tcp.local.", self.const._TYPE_SRV),
+             self.q("Living-Room-2.local.", self.const._TYPE_A)], [], [self.info])
+        self.assertEqual(answers, [self.info.dns_service(), *self.info.dns_addresses()])
+
+    def test_known_answer_suppression(self):
+        ptr = self.info.dns_pointer()
+        answers, _ = p.select_answers([self.q("_airplay._tcp.local.", self.const._TYPE_PTR)],
+                                      [ptr], [self.info])
+        self.assertEqual(answers, [])
+
+    def test_unrelated_question(self):
+        self.assertEqual(p.select_answers([self.q("_hap._tcp.local.", self.const._TYPE_PTR)],
+                                          [], [self.info]), ([], []))
+
+    def test_responder_replies_by_unicast_to_qm_browse(self):
+        from zeroconf import DNSIncoming, DNSOutgoing
+
+        class FakeProxy:
+            own_ips = OWN
+            def published_infos(inner, target):
+                return [self.info]
+
+        class FakeTransport:
+            sent = []
+            def sendto(inner, data, addr):
+                FakeTransport.sent.append((data, addr))
+
+        responder = p.UnicastResponder(FakeProxy(), VLAN20)
+        responder.connection_made(FakeTransport())
+        query = DNSOutgoing(self.const._FLAGS_QR_QUERY)
+        query.add_question(self.q("_airplay._tcp.local.", self.const._TYPE_PTR))
+        packet = query.packets()[0]
+
+        responder.datagram_received(packet, ("192.168.20.10", 5353))
+        responder.datagram_received(packet, ("192.168.20.10", 5353))  # rate limited
+        responder.datagram_received(packet, ("192.168.10.26", 5353))  # not on the target VLAN
+        responder.datagram_received(packet, ("192.168.20.11", 49152))  # legacy unicast
+        self.assertEqual(len(FakeTransport.sent), 1)
+        data, addr = FakeTransport.sent[0]
+        self.assertEqual(addr, ("192.168.20.10", 5353))
+        reply = DNSIncoming(data)
+        self.assertFalse(reply.is_query())
+        self.assertIn(self.info.dns_pointer(), reply.answers())
 
 
 if __name__ == "__main__":

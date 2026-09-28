@@ -71,10 +71,17 @@ configuration:
   proxy_services:
     name: Proxied services
     description: >-
-      Proxy mode only. Full service types to learn and republish, for example
-      _ipp._tcp.local. for printers.
+      Proxy mode only. Service types to learn and republish, written the way
+      dns-sd writes them: a type, then any subtypes after commas, for example
+      _ipp._tcp,_universal for AirPrint or _airplay._tcp for AirPlay.
   proxy_subtypes:
     name: Proxied subtypes
     description: >-
-      Proxy mode only. Subtypes to learn and republish for every service.
-      _universal is what iPhones and iPads browse for AirPrint.
+      Proxy mode only. Subtypes to learn and republish for every service, on
+      top of those listed with each service. Usually empty.
+  proxy_skip_models:
+    name: Never proxy these models
+    description: >-
+      Proxy mode only. Devices whose model starts with one of these are never
+      proxied. Laptops and phones move between VLANs and rename themselves
+      when they find a copy of their own records. Empty = proxy everything.

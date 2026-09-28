@@ -8,12 +8,15 @@ receive *unicast* mDNS replies to their own queries.
 
 Proxy mode answers like a switch's service-discovery gateway instead. It
 learns services on the source interfaces and registers copies of them on the
-target interfaces, pointing at the real device's address. Apple devices start
-every lookup with a query that requests a unicast reply (the QU bit), and
-python-zeroconf honours it, so the answer reaches clients that multicast
-cannot.
+target interfaces, pointing at the real device's address. Two paths deliver
+answers to clients that multicast cannot reach:
 
-Decision logic lives in plain functions at the top of this file so it can be
+* A client's first query in a lookup asks for a unicast reply (the QU bit);
+  python-zeroconf, which publishes the copies, honours that.
+* Later refresh queries ask for multicast replies (QM), which such Wi-Fi drops.
+  A small responder answers those with unicast too, so browse lists stay put.
+
+Decision logic lives in plain functions near the top of this file so it can be
 tested without a network; see tests/test_proxy_logic.py.
 """
 
@@ -27,6 +30,7 @@ import signal
 import socket
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 
 log = logging.getLogger("mdns-proxy")
@@ -36,7 +40,15 @@ log = logging.getLogger("mdns-proxy")
 # interface it arrived on. Not exposed by Python's socket module.
 IP_MULTICAST_ALL = 49
 
+MDNS_ADDR = "224.0.0.251"
+MDNS_PORT = 5353
 BASE = "base"
+DEVICE_INFO = "_device-info._tcp.local."
+SERVICE_TYPES = "_services._dns-sd._udp.local."
+
+# TXT keys that carry a hardware model: AirPlay/_device-info use "model",
+# RAOP uses "am", companion-link uses "rpMd".
+MODEL_KEYS = ("model", "am", "rpmd")
 
 
 # --------------------------------------------------------------------------- #
@@ -64,6 +76,16 @@ def normalize_type(service_type: str) -> str:
     return t + "."
 
 
+def parse_service_spec(spec: str) -> tuple[str, list[str]]:
+    """Parse a service entry in dns-sd's notation.
+
+    '_ipp._tcp,_universal' -> ('_ipp._tcp.local.', ['_universal'])
+    '_airplay._tcp.local.' -> ('_airplay._tcp.local.', [])
+    """
+    parts = [p.strip() for p in spec.split(",")]
+    return normalize_type(parts[0]), [p for p in parts[1:] if p]
+
+
 def split_type(browsed_type: str) -> tuple[str, str]:
     """Split a browsed type into (label, base type).
 
@@ -81,20 +103,51 @@ def variant_type(base_type: str, label: str) -> str:
     return base_type if label == BASE else f"{label}._sub.{base_type}"
 
 
-def browse_types(services: list[str], subtypes: list[str]) -> list[str]:
-    """Every type the learner must browse: each service plus each of its subtypes."""
+def browse_types(specs: list[str], global_subtypes: list[str]) -> list[str]:
+    """Every type to browse: each service, its own subtypes, then any global ones."""
     out: list[str] = []
-    for svc in services:
-        base = normalize_type(svc)
+    for spec in specs:
+        base, own = parse_service_spec(spec)
         out.append(base)
-        out.extend(variant_type(base, st) for st in subtypes)
+        for sub in own + [s for s in global_subtypes if s not in own]:
+            out.append(variant_type(base, sub))
     return out
+
+
+def instance_label(name: str, base_type: str) -> str:
+    """'Living Room._airplay._tcp.local.' -> 'Living Room' (the device's display name)."""
+    if name.lower().endswith("." + base_type.lower()):
+        return name[: -len(base_type) - 1]
+    return name
 
 
 def name_excluded(name: str, server: str | None, patterns: list[str]) -> bool:
     """Case-insensitive substring match against the instance name or host name."""
     haystacks = [name.lower(), (server or "").lower()]
     return any(p.lower() in h for p in patterns if p for h in haystacks)
+
+
+def txt_models(properties: dict | None) -> list[str]:
+    """Hardware model strings from a TXT record (keys compared case-insensitively)."""
+    out: list[str] = []
+    for key, value in (properties or {}).items():
+        k = key.decode("utf-8", "replace") if isinstance(key, bytes) else str(key)
+        if k.lower() in MODEL_KEYS and value:
+            out.append(value.decode("utf-8", "replace") if isinstance(value, bytes) else str(value))
+    return out
+
+
+def roaming_model(models: list[str], prefixes: list[str]) -> str | None:
+    """The first model that marks a device which moves between networks, if any.
+
+    Laptops, phones and tablets hop between VLANs (docked, then on Wi-Fi). A
+    copy of their records left behind on another VLAN makes them see their own
+    name claimed and rename themselves, so they are never proxied.
+    """
+    for m in models:
+        if any(p and m.lower().startswith(p.lower()) for p in prefixes):
+            return m
+    return None
 
 
 def plan_targets(
@@ -128,8 +181,50 @@ def plan_targets(
     return allowed, "ok"
 
 
+def select_answers(questions, known_answers, infos) -> tuple[list, list]:
+    """Records answering `questions` from the published ServiceInfos.
+
+    Returns (answers, additionals). Records the querier already holds with at
+    least half their TTL left are dropped (RFC 6762 known-answer suppression).
+    """
+    from zeroconf import const
+
+    ptr, srv, txt, a, any_ = (const._TYPE_PTR, const._TYPE_SRV, const._TYPE_TXT,
+                              const._TYPE_A, const._TYPE_ANY)
+    answers: list = []
+    extras: list = []
+
+    for q in questions:
+        qname, qtype = q.name.lower(), q.type
+        for info in infos:
+            name = info.name.lower()
+            if qtype in (ptr, any_) and qname == info.type.lower():
+                answers.append(info.dns_pointer())
+                extras += [info.dns_service(), info.dns_text(), *info.dns_addresses()]
+            if qtype in (srv, any_) and qname == name:
+                answers.append(info.dns_service())
+                extras += info.dns_addresses()
+            if qtype in (txt, any_) and qname == name:
+                answers.append(info.dns_text())
+            if qtype in (a, any_) and info.server and qname == info.server.lower():
+                answers += info.dns_addresses()
+
+    def keep(records, exclude=()):
+        out: list = []
+        for r in records:
+            if r in out or r in exclude:
+                continue
+            if any(k == r and k.ttl >= r.ttl / 2 for k in known_answers):
+                continue
+            out.append(r)
+        return out
+
+    kept = keep(answers)
+    return kept, keep(extras, exclude=kept)
+
+
 # --------------------------------------------------------------------------- #
-# Host introspection                                                          #
+# Host introspection and sockets                                              #
 # --------------------------------------------------------------------------- #
 
 def iface_from_host(name: str) -> Iface:
@@ -137,8 +232,7 @@ def iface_from_host(name: str) -> Iface:
         ["ip", "-j", "-4", "addr", "show", "dev", name],
         check=True, capture_output=True, text=True,
     ).stdout
-    entries = json.loads(out or "[]")
-    for entry in entries:
+    for entry in json.loads(out or "[]"):
         for a in entry.get("addr_info", []):
             if a.get("family") == "inet":
                 net = ipaddress.IPv4Network(f"{a['local']}/{a['prefixlen']}", strict=False)
@@ -175,11 +269,106 @@ def restrict_multicast_delivery() -> None:
         sock = original(*args, **kwargs)
         if sock is not None:
             sock.setsockopt(socket.IPPROTO_IP, IP_MULTICAST_ALL, 0)
-            value = sock.getsockopt(socket.IPPROTO_IP, IP_MULTICAST_ALL)
-            log.debug("listen socket IP_MULTICAST_ALL=%s", value)
         return sock
 
     zc_net.new_listen_socket = listen_socket_joined_groups_only
+
+
+def open_responder_socket(iface_ip: str) -> socket.socket:
+    """UDP 5353 socket that hears multicast mDNS queries on one interface only.
+
+    Replies must leave from port 5353 (RFC 6762 s.6), so it shares the mDNS
+    port with the host's other responders. It binds the group address, not the
+    wildcard: SO_REUSEPORT load-balances *unicast* datagrams across wildcard
+    sockets, and this socket would otherwise swallow unicast replies meant for
+    Home Assistant's own zeroconf. Linux still picks a unicast source address
+    for what it sends, from the route to the client.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if hasattr(socket, "SO_REUSEPORT"):
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    s.bind((MDNS_ADDR, MDNS_PORT))
+    if sys.platform.startswith("linux"):
+        s.setsockopt(socket.IPPROTO_IP, IP_MULTICAST_ALL, 0)
+    s.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
+                 socket.inet_aton(MDNS_ADDR) + socket.inet_aton(iface_ip))
+    # RFC 6762 s.11: mDNS responses, unicast included, are sent with TTL 255.
+    s.setsockopt(socket.IPPROTO_IP, socket.IP_TTL, 255)
+    s.setblocking(False)
+    return s
+
+
+# --------------------------------------------------------------------------- #
+# Unicast responder for refresh (QM) queries                                  #
+# --------------------------------------------------------------------------- #
+
+class UnicastResponder(asyncio.DatagramProtocol):
+    """Answer QM queries from clients on one target interface by unicast.
+
+    Only questions without the QU bit are handled; python-zeroconf already
+    answers QU questions by unicast, and answering twice gains nothing.
+    """
+
+    RATE_LIMIT = 1.0  # seconds between identical answers to one client
+
+    def __init__(self, proxy: "Proxy", target: Iface):
+        self.proxy = proxy
+        self.target = target
+        self.transport = None
+        self.last_sent: dict[tuple, float] = {}
+
+    def connection_made(self, transport) -> None:
+        self.transport = transport
+
+    def datagram_received(self, data: bytes, addr) -> None:
+        try:
+            self._handle(data, addr)
+        except Exception:
+            log.debug("Responder failed on a packet from %s", addr, exc_info=True)
+
+    def _handle(self, data: bytes, addr) -> None:
+        from zeroconf import DNSIncoming, DNSOutgoing, const
+
+        ip, port = addr[0], addr[1]
+        # Legacy unicast queries (source port not 5353) need the query ID
+        # echoed; python-zeroconf answers those correctly already.
+        if port != MDNS_PORT:
+            return
+        if ip in self.proxy.own_ips or not self.target.contains(ip):
+            return
+        msg = DNSIncoming(data, (ip, port))
+        if not msg.valid or not msg.is_query():
+            return
+        questions = [q for q in msg.questions if not q.unicast]
+        if not questions:
+            return
+
+        infos = self.proxy.published_infos(self.target.name)
+        if not infos:
+            return
+        answers, extras = select_answers(questions, msg.answers(), infos)
+        if not answers:
+            return
+
+        now = time.monotonic()
+        key = (ip, port, tuple(sorted((q.name.lower(), q.type) for q in questions)))
+        if now - self.last_sent.get(key, 0.0) < self.RATE_LIMIT:
+            return
+        self.last_sent[key] = now
+        if len(self.last_sent) > 4096:
+            cutoff = now - 60
+            self.last_sent = {k: t for k, t in self.last_sent.items() if t > cutoff}
+
+        out = DNSOutgoing(const._FLAGS_QR_RESPONSE | const._FLAGS_AA, multicast=False)
+        for r in answers:
+            out.add_answer_at_time(r, 0)  # 0: records are fresh, skip the expiry check
+        for r in extras:
+            out.add_additional_answer(r)
+        for packet in out.packets():
+            self.transport.sendto(packet, (ip, port))
+        log.debug("Answered %s from %s with %d record(s)",
+                  ", ".join(q.name for q in questions), ip, len(answers) + len(extras))
 
 
 # --------------------------------------------------------------------------- #
@@ -204,22 +393,28 @@ class Entry:
 
 
 class Proxy:
-    def __init__(self, sources, targets, services, subtypes, own_ips, exclude_sources, exclude_names):
+    def __init__(self, sources, targets, services, subtypes, own_ips,
+                 exclude_sources, exclude_names, skip_models):
         self.sources: list[Iface] = sources
         self.targets: list[Iface] = targets
-        self.services = [normalize_type(s) for s in services]
-        self.subtypes = list(subtypes)
+        self.specs: list[str] = list(services)
+        self.proxied_bases = {parse_service_spec(s)[0].lower() for s in self.specs}
+        self.global_subtypes = list(subtypes)
         self.own_ips: set[str] = own_ips
         self.exclude_sources: set[str] = set(exclude_sources)
         self.exclude_names: list[str] = list(exclude_names)
+        self.skip_models: list[str] = list(skip_models)
 
         self.learner = None
         self.browser = None
         self.publishers: dict[tuple[str, str], object] = {}
+        self.responders: list = []
         self.learned: dict[str, Entry] = {}
         # (target name, label, instance key) -> (ServiceInfo, fingerprint)
         self.published: dict[tuple[str, str, str], tuple[object, tuple]] = {}
         self.skipped: dict[str, str] = {}
+        self.roaming_labels: dict[str, str] = {}   # display name -> model
+        self.seen_types: set[str] = set()
         self.queue: asyncio.Queue = asyncio.Queue()
 
     # -- lifecycle ----------------------------------------------------------- #
@@ -231,33 +426,50 @@ class Proxy:
         self.learner = AsyncZeroconf(
             interfaces=[s.ip for s in self.sources], ip_version=IPVersion.V4Only,
         )
+        labels = {BASE}
+        for t in browse_types(self.specs, self.global_subtypes):
+            labels.add(split_type(t)[0])
         for target in self.targets:
-            for label in [BASE, *self.subtypes]:
+            for label in sorted(labels):
                 self.publishers[(target.name, label)] = AsyncZeroconf(
                     interfaces=[target.ip], ip_version=IPVersion.V4Only,
                 )
 
-        types = browse_types(self.services, self.subtypes)
+        loop = asyncio.get_running_loop()
+        for target in self.targets:
+            transport, _ = await loop.create_datagram_endpoint(
+                lambda t=target: UnicastResponder(self, t),
+                sock=open_responder_socket(target.ip),
+            )
+            self.responders.append(transport)
+
+        types = browse_types(self.specs, self.global_subtypes)
         log.info("Learning on %s: %s", ", ".join(s.name for s in self.sources), " ".join(types))
-        log.info("Publishing on %s", ", ".join(t.name for t in self.targets))
+        log.info("Publishing on %s (with unicast answers to refresh queries)",
+                 ", ".join(t.name for t in self.targets))
         # QM, not QU: a unicast reply to the learner would be load-balanced
         # across every socket bound to UDP 5353 on this host (Home Assistant's
         # zeroconf included) and could land in the wrong one.
         self.browser = AsyncServiceBrowser(
-            self.learner.zeroconf, types, handlers=[self._on_change],
-            question_type=DNSQuestionType.QM,
+            self.learner.zeroconf, types + [DEVICE_INFO, SERVICE_TYPES],
+            handlers=[self._on_change], question_type=DNSQuestionType.QM,
         )
 
     async def stop(self) -> None:
         log.info("Stopping; withdrawing %d published records", len(self.published))
         if self.browser is not None:
             await self.browser.async_cancel()
+        for transport in self.responders:
+            transport.close()
         for key in list(self.published):
             await self._unpublish(*key)
         for pub in self.publishers.values():
             await pub.async_close()
         if self.learner is not None:
             await self.learner.async_close()
+
+    def published_infos(self, target: str) -> list:
+        return [info for (t, _, _), (info, _) in self.published.items() if t == target]
 
     def _on_change(self, zeroconf, service_type, name, state_change) -> None:
         # Called on zeroconf's loop; serialise all work through one queue.
@@ -271,11 +483,19 @@ class Proxy:
             except Exception:  # never let one bad record stop the proxy
                 log.exception("Failed handling %s %s", state_change, name)
 
-    async def report(self, every: float = 300) -> None:
+    async def report(self, first: float = 90, every: float = 1800) -> None:
+        await asyncio.sleep(first)
         while True:
-            await asyncio.sleep(every)
             names = sorted({e.name for e in self.learned.values() if e.targets})
             log.info("Proxying %d service(s): %s", len(names), "; ".join(names) or "none")
+            proxied = sorted(t for t in self.seen_types if t in self.proxied_bases)
+            other = sorted(t for t in self.seen_types if t not in self.proxied_bases)
+            log.info("Service types on source VLANs - proxied: %s", " ".join(proxied) or "none")
+            log.info("Service types on source VLANs - not proxied: %s", " ".join(other) or "none")
+            if self.roaming_labels:
+                log.info("Never proxied (laptops/phones): %s", "; ".join(
+                    f"{n} ({m})" for n, m in sorted(self.roaming_labels.items())))
+            await asyncio.sleep(every)
 
     # -- event handling ------------------------------------------------------ #
 
@@ -283,10 +503,36 @@ class Proxy:
         from zeroconf import DNSQuestionType, IPVersion, ServiceStateChange
         from zeroconf.asyncio import AsyncServiceInfo
 
+        if browsed_type == SERVICE_TYPES:
+            if state_change is not ServiceStateChange.Removed:
+                self.seen_types.add(name.lower())
+            return
+
+        removed = state_change is ServiceStateChange.Removed
+
+        if browsed_type == DEVICE_INFO:
+            if removed:
+                return
+            info = AsyncServiceInfo(DEVICE_INFO, name)
+            if not await info.async_request(self.learner.zeroconf, 3000,
+                                            question_type=DNSQuestionType.QM):
+                return
+            model = roaming_model(txt_models(info.properties), self.skip_models)
+            if model:
+                label = instance_label(name, DEVICE_INFO)
+                if label not in self.roaming_labels:
+                    log.info("Will not proxy %s: roaming device (model %s)", label, model)
+                self.roaming_labels[label] = model
+                for key, entry in list(self.learned.items()):
+                    if instance_label(entry.name, entry.base_type) == label:
+                        await self._sync(entry, withdraw_all=True)
+                        del self.learned[key]
+            return
+
         label, base = split_type(browsed_type)
         key = name.lower()
 
-        if state_change is ServiceStateChange.Removed:
+        if removed:
             entry = self.learned.get(key)
             if entry is None:
                 return
@@ -300,12 +546,18 @@ class Proxy:
             return
 
         info = AsyncServiceInfo(base, name)
-        if not await info.async_request(self.learner.zeroconf, 3000, question_type=DNSQuestionType.QM):
+        if not await info.async_request(self.learner.zeroconf, 3000,
+                                        question_type=DNSQuestionType.QM):
             log.debug("Could not resolve %s", name)
             return
 
         addresses = info.parsed_addresses(IPVersion.V4Only)
-        if name_excluded(name, info.server, self.exclude_names):
+        display = instance_label(name, base)
+        model = roaming_model(txt_models(info.properties), self.skip_models)
+        if model or display in self.roaming_labels:
+            reason = f"roaming device (model {model or self.roaming_labels[display]})"
+            targets = []
+        elif name_excluded(name, info.server, self.exclude_names):
             reason = "name is excluded"
             targets = []
         else:
@@ -343,6 +595,7 @@ class Proxy:
         key = entry.name.lower()
         desired = set() if withdraw_all else {
             (t.name, label) for t in entry.targets for label in [BASE, *entry.subtypes]
+            if (t.name, label) in self.publishers
         }
         current = {(t, l) for (t, l, k) in self.published if k == key}
         for target, label in current - desired:
@@ -370,16 +623,15 @@ class Proxy:
             server=entry.server,
         )
         publisher = self.publishers[(target, label)]
+        suffix = "" if label == BASE else f" (subtype {label})"
         if existing is None:
             # cooperating_responders: the real device legitimately owns this
             # name on its own VLAN, so do not probe for or fight conflicts.
             await (await publisher.async_register_service(info, cooperating_responders=True))
-            log.info("Published %s on %s%s", entry.name, target,
-                     "" if label == BASE else f" (subtype {label})")
+            log.info("Published %s on %s%s", entry.name, target, suffix)
         else:
             await (await publisher.async_update_service(info))
-            log.info("Updated %s on %s%s", entry.name, target,
-                     "" if label == BASE else f" (subtype {label})")
+            log.info("Updated %s on %s%s", entry.name, target, suffix)
         self.published[key] = (info, fingerprint)
 
     async def _unpublish(self, target: str, label: str, key: str) -> None:
@@ -419,6 +671,7 @@ async def amain(options: dict) -> None:
         own_ips=host_ipv4_addresses(),
         exclude_sources=options.get("exclude_sources") or [],
         exclude_names=options.get("exclude_names") or [],
+        skip_models=options.get("proxy_skip_models") or [],
     )
     await proxy.start()
 

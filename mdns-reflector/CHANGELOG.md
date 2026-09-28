@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.2.0 - 2026-09-28
+
+### Added
+
+- Proxy mode answers refresh (QM) queries by unicast to the asking client, so
+  browse lists on Wi-Fi that drops multicast no longer empty between lookups.
+  Known-answer suppression and a per-client rate limit keep it quiet.
+- Proxy mode never proxies laptops, phones or tablets: new option
+  `proxy_skip_models` (default `Mac`, `iMac`, `iPhone`, `iPad`, `iPod`),
+  matched against the model in AirPlay, RAOP and companion-link TXT records.
+  Apple TVs and HomePods are proxied.
+- Per-service subtypes in dns-sd notation: `_ipp._tcp,_universal`.
+- A periodic audit in the log: what is proxied, every service type seen on
+  the source VLANs (proxied and not), and devices skipped as roaming.
+
+### Changed
+
+- `proxy_services` now defaults to printing, scanning, AirPlay
+  (`_airplay`, `_raop`, `_companion-link`), HomeKit (`_hap._tcp`),
+  Chromecast and Spotify Connect. `proxy_subtypes` defaults to empty, since
+  `_universal` moved onto the `_ipp`/`_ipps` entries. Existing
+  configurations keep working unchanged.
+
 ## 1.1.0 - 2026-09-28
 
 ### Added

@@ -1,11 +1,11 @@
 ---
 # https://developers.home-assistant.io/docs/add-ons/configuration#add-on-config
 name: mDNS Reflector
-version: "1.1.0"
+version: "1.2.0"
 slug: mdns_reflector
 description: >-
-  Reflect mDNS/Bonjour between VLAN interfaces with Avahi, so HomeKit,
-  AirPlay and ONVIF discovery work across network segments.
+  Reflect or proxy mDNS/Bonjour between VLAN interfaces, so AirPrint,
+  AirPlay and HomeKit discovery work across network segments.
 url: "https://github.com/jeanders/ha-mdns-reflector/tree/main/mdns-reflector"
 # Prebuilt multi-arch images, published by .github/workflows/release.yaml when
 # a GitHub release is published. The release build reads this value to know
@@ -98,13 +98,40 @@ options:
   # ...and publish on these. The two lists must not overlap.
   proxy_targets:
     - end0.20
+  # Service types to learn and republish, written the way dns-sd writes them:
+  # a type, then any subtypes after commas. AirPrint on iPhone and iPad browses
+  # the _universal subtype of _ipp/_ipps, so printers need it.
+  #
+  # Deliberately absent: _device-info and _sleep-proxy (host plumbing, not
+  # services), Thread border-router infrastructure (_meshcop, _trel, _srpl-tls),
+  # _matter and _hap._udp (IPv6-only here; the proxy is IPv4), and _smb/_adisk
+  # (Time Machine works better pointed at by address). See DOCS.md.
   proxy_services:
-    - _ipp._tcp.local.
-    - _ipps._tcp.local.
-  # Subtypes to learn and republish for every service. AirPrint on iPhone and
-  # iPad browses _universal._sub._ipp._tcp, so printers need it.
-  proxy_subtypes:
-    - _universal
+    - _ipp._tcp,_universal
+    - _ipps._tcp,_universal
+    - _printer._tcp
+    - _pdl-datastream._tcp
+    - _uscan._tcp
+    - _uscans._tcp
+    - _airplay._tcp
+    - _raop._tcp
+    - _companion-link._tcp
+    - _hap._tcp
+    - _googlecast._tcp
+    - _spotify-connect._tcp
+  # Subtypes to learn and republish for EVERY service above, on top of the
+  # per-service ones. Usually empty.
+  proxy_subtypes: []
+  # Devices whose model (from the TXT keys model, am or rpMd) starts with one
+  # of these are never proxied. Laptops, phones and tablets move between
+  # VLANs; a copy of their records left on another VLAN makes them see their
+  # own name taken and rename themselves. Empty list = proxy everything.
+  proxy_skip_models:
+    - Mac
+    - iMac
+    - iPhone
+    - iPad
+    - iPod
 
 schema:
   mode: list(reflector|proxy)
@@ -134,4 +161,6 @@ schema:
   proxy_services:
     - str
   proxy_subtypes:
+    - str
+  proxy_skip_models:
     - str

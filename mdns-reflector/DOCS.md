@@ -55,13 +55,16 @@ IP, your Wi-Fi drops multicast and you need proxy mode.
 mode: proxy
 proxy_sources:
   - end0          # VLAN the printers are on
+  - end0.30       # IoT VLAN: Apple TVs, AV receivers, HomeKit accessories
 proxy_targets:
   - end0.20       # Wi-Fi client VLAN
-proxy_services:
-  - _ipp._tcp.local.
-  - _ipps._tcp.local.
-proxy_subtypes:
-  - _universal    # AirPrint on iPhone and iPad browses this
+proxy_services:   # dns-sd notation: type, then subtypes after commas
+  - _ipp._tcp,_universal
+  - _ipps._tcp,_universal
+  - _airplay._tcp
+  - _raop._tcp
+  - _companion-link._tcp
+  - _hap._tcp
 ```
 
 How it behaves:
@@ -70,17 +73,29 @@ How it behaves:
   `proxy_targets`, and the two lists must not overlap. Learning on an interface
   it also publishes to would let it hear its own copies and keep a service
   alive after the real device disappears.
+- **It answers by unicast.** A client's first query in a lookup asks for a
+  unicast reply, and the proxy's zeroconf stack honours that. Refresh queries
+  that follow ask for multicast replies; the proxy answers those by unicast
+  too, directly to the asking client, so browse lists on Wi-Fi stay populated
+  instead of emptying between lookups. Records the client already holds are
+  not repeated (known-answer suppression), and each client gets at most one
+  answer per question per second.
+- **Laptops, phones and tablets are never proxied.** Their models (read from
+  the `model`, `am` or `rpMd` TXT keys that AirPlay, RAOP and companion-link
+  carry) are matched against `proxy_skip_models`, which defaults to `Mac`,
+  `iMac`, `iPhone`, `iPad` and `iPod`. These devices move between VLANs, and a
+  copy of their records waiting on the VLAN they move to makes them rename
+  themselves. Apple TVs (`AppleTV…`) and HomePods (`AudioAccessory…`) are
+  proxied as normal.
 - **It never publishes a host onto a VLAN where that host already has an
   address.** A laptop on wired VLAN 10 and Wi-Fi VLAN 20 at once is left alone
   on both, which prevents the endless-renaming problem described below.
 - **It never proxies this host's own services.** Home Assistant and Scrypted
   already advertise on every VLAN the host is on.
-- **Unicast replies depend on the client asking for them.** Apple devices
-  request a unicast reply on the first query of every lookup, which is what
-  proxy mode relies on. Later refresh queries ask for multicast; on Wi-Fi that
-  drops multicast those answers are lost, so entries can age out of a client's
-  cache between lookups. A fresh lookup - opening a print dialog, printing -
-  asks again and gets an answer.
+- **It audits.** Every 30 minutes (first after 90 seconds) the log lists what
+  is being proxied, every service type seen on the source VLANs split into
+  proxied and not proxied, and the devices skipped as roaming. Use the "not
+  proxied" line to decide whether anything belongs in `proxy_services`.
 - **Removals are slow to reach Wi-Fi clients.** When a device disappears the
   proxy withdraws it with a multicast goodbye, which such networks drop.
   Clients forget it when their cached record expires.
@@ -88,6 +103,23 @@ How it behaves:
   against the learned service's addresses, instance name and host name.
   `exclude_mode` and the reflector-only options are ignored.
 - IPv4 only.
+
+#### Which services to proxy
+
+The default list covers printing, scanning, AirPlay, HomeKit, Chromecast and
+Spotify Connect. Add vendor services you use from phones, for example
+`_heos-audio._tcp` (Denon/Marantz HEOS), `_tidalconnect._tcp`,
+`_qobuz-connect._tcp` or `_lutron._tcp`.
+
+Left out on purpose:
+
+| Type | Why |
+|---|---|
+| `_device-info._tcp`, `_sleep-proxy._udp` | Host plumbing, not services. A copy of a sleep proxy on another VLAN would attract registrations it cannot serve. |
+| `_meshcop._udp`, `_trel._udp`, `_srpl-tls._tcp`, `_dnssd-srp._udp` | Thread border-router infrastructure. Border routers must find each other on their own link. |
+| `_matter._tcp`, `_matterc._udp`, `_hap._udp` | Advertised over IPv6 (Thread devices), which proxy mode does not handle. Controllers reach them through the border router and home hub anyway. |
+| `_smb._tcp`, `_adisk._tcp`, `_afpovertcp._tcp` | Work across VLANs, but Time Machine and Finder are happier with a server added by address, and file servers often sit on a VLAN this host is not on. |
+| `_http._tcp` | Nearly every device's web page. Noisy, and nobody browses for it. |
 
 ## Prerequisites
 

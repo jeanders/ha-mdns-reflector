@@ -19,8 +19,14 @@ jobs:
       - name: Check out code from GitHub
         uses: actions/checkout@v7.0.1
 
+      - name: Install python-zeroconf (the version the image pins)
+        run: |
+          version=$(sed -n 's/^ARG ZEROCONF_VERSION=//p' mdns-reflector/Dockerfile)
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install "zeroconf==${version}"
+
       - name: Run unit tests
-        run: python3 -m unittest discover -s tests -v
+        run: '"$RUNNER_TEMP/venv/bin/python" -m unittest discover -s tests -v'
 
   shell:
     name: Shell syntax
