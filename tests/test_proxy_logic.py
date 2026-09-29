@@ -72,6 +72,13 @@ class TypeNames(unittest.TestCase):
             ["_ipp._tcp.local.", "_universal._sub._ipp._tcp.local."],
         )
 
+    def test_device_label_strips_raop_prefix(self):
+        self.assertEqual(p.device_label("8A6897F05564@John’s MacBook Pro (2767)._raop._tcp.local.",
+                                        "_raop._tcp.local."), "John’s MacBook Pro (2767)")
+        self.assertEqual(p.device_label("000678de9f34Denon AVR-X1800H._spotify-connect._tcp.local.",
+                                        "_spotify-connect._tcp.local."),
+                         "000678de9f34Denon AVR-X1800H")
+
     def test_instance_label(self):
         self.assertEqual(p.instance_label("Living Room._airplay._tcp.local.", "_airplay._tcp.local."),
                          "Living Room")
@@ -156,6 +163,31 @@ class RoamingDevices(unittest.TestCase):
     def test_empty_prefix_list_disables_the_check(self):
         self.assertIsNone(p.roaming_model(["MacBookPro18,1"], []))
         self.assertIsNone(p.roaming_model(["MacBookPro18,1"], [""]))
+
+
+class RoamingWithdrawal(unittest.IsolatedAsyncioTestCase):
+    async def test_services_learned_before_the_model_was_known_are_withdrawn(self):
+        proxy = p.Proxy([VLAN10], [VLAN20], [], [], OWN, [], [], ["Mac"])
+        withdrawn = []
+
+        async def fake_sync(entry, withdraw_all=False):
+            withdrawn.append(entry.name)
+        proxy._sync = fake_sync
+
+        mac = "JohnAndersonSHI-3365.local."
+        for name, base, server in [
+            ("John’s MacBook Pro (2767)._companion-link._tcp.local.", "_companion-link._tcp.local.", mac),
+            ("Office._ipp._tcp.local.", "_ipp._tcp.local.", mac),  # shared printer: same host
+            ("Living Room._companion-link._tcp.local.", "_companion-link._tcp.local.", "Living-Room-2.local."),
+        ]:
+            proxy.learned[name.lower()] = p.Entry(base_type=base, name=name, server=server)
+
+        await proxy._mark_roaming("John’s MacBook Pro (2767)", mac.upper(), "Mac16,7")
+
+        self.assertEqual(sorted(withdrawn), ["John’s MacBook Pro (2767)._companion-link._tcp.local.",
+                                             "Office._ipp._tcp.local."])
+        self.assertEqual(list(proxy.learned), ["living room._companion-link._tcp.local."])
+        self.assertEqual(proxy.roaming_hosts, {mac.lower(): "Mac16,7"})
 
 
 @unittest.skipIf(zeroconf is None, "python-zeroconf not installed")

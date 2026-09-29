@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.1 - 2026-09-28
+
+### Fixed
+
+- A roaming device's services learned *before* the record that revealed its
+  model (a Mac's `_companion-link` arriving ahead of its `_airplay`) stayed
+  published. Roaming is now tracked per device, by name (ignoring RAOP's
+  `MAC@` prefix) and by host name, and all of that device's services are
+  withdrawn.
+
 ## 1.2.0 - 2026-09-28
 
 ### Added

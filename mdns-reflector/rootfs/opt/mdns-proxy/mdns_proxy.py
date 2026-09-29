@@ -26,6 +26,7 @@ import asyncio
 import ipaddress
 import json
 import logging
+import re
 import signal
 import socket
 import subprocess
@@ -119,6 +120,19 @@ def instance_label(name: str, base_type: str) -> str:
     if name.lower().endswith("." + base_type.lower()):
         return name[: -len(base_type) - 1]
     return name
+
+
+# RAOP names are "<12 hex digits of MAC>@<device name>".
+_RAOP_PREFIX = re.compile(r"^[0-9A-Fa-f]{12}@")
+
+
+def device_label(name: str, base_type: str) -> str:
+    """The device a service belongs to, as named by its user.
+
+    'Living Room._airplay._tcp.local.'             -> 'Living Room'
+    '8A6897F05564@Living Room._raop._tcp.local.'   -> 'Living Room'
+    """
+    return _RAOP_PREFIX.sub("", instance_label(name, base_type))
 
 
 def name_excluded(name: str, server: str | None, patterns: list[str]) -> bool:
@@ -413,7 +427,8 @@ class Proxy:
         # (target name, label, instance key) -> (ServiceInfo, fingerprint)
         self.published: dict[tuple[str, str, str], tuple[object, tuple]] = {}
         self.skipped: dict[str, str] = {}
-        self.roaming_labels: dict[str, str] = {}   # display name -> model
+        self.roaming_labels: dict[str, str] = {}   # device label -> model
+        self.roaming_hosts: dict[str, str] = {}    # host name -> model
         self.seen_types: set[str] = set()
         self.queue: asyncio.Queue = asyncio.Queue()
 
@@ -519,14 +534,7 @@ class Proxy:
                 return
             model = roaming_model(txt_models(info.properties), self.skip_models)
             if model:
-                label = instance_label(name, DEVICE_INFO)
-                if label not in self.roaming_labels:
-                    log.info("Will not proxy %s: roaming device (model %s)", label, model)
-                self.roaming_labels[label] = model
-                for key, entry in list(self.learned.items()):
-                    if instance_label(entry.name, entry.base_type) == label:
-                        await self._sync(entry, withdraw_all=True)
-                        del self.learned[key]
+                await self._mark_roaming(device_label(name, DEVICE_INFO), info.server, model)
             return
 
         label, base = split_type(browsed_type)
@@ -552,10 +560,16 @@ class Proxy:
             return
 
         addresses = info.parsed_addresses(IPVersion.V4Only)
-        display = instance_label(name, base)
+        device = device_label(name, base)
+        server = (info.server or "").lower()
         model = roaming_model(txt_models(info.properties), self.skip_models)
-        if model or display in self.roaming_labels:
-            reason = f"roaming device (model {model or self.roaming_labels[display]})"
+        if model:
+            # Withdraws this device's other services too, including any
+            # learned before this record revealed what the device is.
+            await self._mark_roaming(device, info.server, model)
+        model = model or self.roaming_labels.get(device) or self.roaming_hosts.get(server)
+        if model:
+            reason = f"roaming device (model {model})"
             targets = []
         elif name_excluded(name, info.server, self.exclude_names):
             reason = "name is excluded"
@@ -588,6 +602,21 @@ class Proxy:
         if is_new:
             log.info("Learned %s -> %s:%s", name, ",".join(entry.addresses), entry.port)
         await self._sync(entry)
+
+    async def _mark_roaming(self, device: str, server: str | None, model: str) -> None:
+        server = (server or "").lower()
+        if device not in self.roaming_labels and server not in self.roaming_hosts:
+            log.info("Will not proxy %s: roaming device (model %s)", device, model)
+        self.roaming_labels[device] = model
+        if server:
+            self.roaming_hosts[server] = model
+        for key, entry in list(self.learned.items()):
+            if (device_label(entry.name, entry.base_type) == device
+                    or (server and entry.server.lower() == server)):
+                log.info("Withdrawing %s: roaming device (model %s)", entry.name, model)
+                await self._sync(entry, withdraw_all=True)
+                del self.learned[key]
+                self.skipped[key] = f"roaming device (model {model})"
 
     # -- publishing ---------------------------------------------------------- #
 
